@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(npx next *)",
+      "Bash(mkdir -p \"c:\\\\Users\\\\jonas\\\\.claude\\\\projects\\\\c--Users-jonas-intervals-dashboard\\\\memory\" 2>/dev/null; echo done)",
+      "Bash(node -e \"const pkg = require\\('./node_modules/date-fns/package.json'\\); console.log\\(pkg.version\\)\")"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\jonas\\.claude\\projects\\c--Users-jonas-intervals-dashboard"
+    ]
+  }
+}

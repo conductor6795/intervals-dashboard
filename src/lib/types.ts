@@ -49,6 +49,30 @@ export interface IntervalsEvent {
   description?: string;
   color?: string;
   category?: string;
+  load?: number; // geplanter TSS
+}
+
+export interface AthleteData {
+  name?: string;
+  sex?: string;
+  weight?: number;
+  // FTP – intervals.icu nutzt verschiedene Felder je nach Version
+  ftp?: number;
+  threshold_power?: number;
+  // LTHR
+  lt_hr?: number;
+  lthr?: number;
+  // Max HR
+  max_hr?: number;
+  maxHr?: number;
+  // Resting HR
+  rest_hr?: number;
+  resting_hr?: number;
+  restingHr?: number;
+  // VO2max (von Garmin/Wahoo synchronisiert)
+  vo2max?: number;
+  // Index-Signatur für alle weiteren API-Felder
+  [key: string]: unknown;
 }
 
 export interface ProRace {

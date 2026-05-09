@@ -6,10 +6,10 @@ const config: Config = {
     extend: {
       colors: {
         dash: {
-          bg: "#0b0f1a",
-          card: "#131929",
-          border: "#1e2d4a",
-          muted: "#94a3b8",
+          bg:     "rgb(var(--dash-bg-rgb) / <alpha-value>)",
+          card:   "rgb(var(--dash-card-rgb) / <alpha-value>)",
+          border: "rgb(var(--dash-border-rgb) / <alpha-value>)",
+          muted:  "rgb(var(--dash-muted-rgb) / <alpha-value>)",
         },
       },
       fontFamily: {

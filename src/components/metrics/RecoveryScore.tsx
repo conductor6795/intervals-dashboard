@@ -15,7 +15,7 @@ function color(v: number) {
 export default function RecoveryScore({ value }: Props) {
   const c = color(value);
   return (
-    <div className="flex flex-col p-5 rounded-xl border border-dash-border bg-dash-card">
+    <div className="flex flex-col p-5 rounded-2xl border border-dash-border bg-dash-card h-full justify-center">
       <span className="text-xs text-dash-muted uppercase tracking-wider mb-3">Erholung</span>
       <div className="flex items-end gap-2 mb-3">
         <span className={clsx("text-4xl font-bold tabular-nums", c.text)}>{value}</span>

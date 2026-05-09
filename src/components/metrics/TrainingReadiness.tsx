@@ -19,7 +19,7 @@ export default function TrainingReadiness({ value }: Props) {
   const dash = (value / 100) * circ;
 
   return (
-    <div className={clsx("flex flex-col items-center justify-center p-5 rounded-xl border border-dash-border", c.bg)}>
+    <div className={clsx("flex flex-col items-center justify-center p-5 rounded-2xl border border-dash-border h-full", c.bg)}>
       <span className="text-xs text-dash-muted mb-3 uppercase tracking-wider">Trainingsbereitschaft</span>
       <div className="relative w-28 h-28">
         <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">

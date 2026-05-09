@@ -2,33 +2,111 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme: Navy (default) ───────────────────────────────────── */
+:root,
+[data-theme="navy"] {
+  --dash-bg-rgb:     11 15 26;
+  --dash-card-rgb:   19 25 41;
+  --dash-border-rgb: 30 45 74;
+  --dash-muted-rgb:  148 163 184;
+  /* Hex-Varianten für SVG/direkte Nutzung */
+  --dash-bg:     #0b0f1a;
+  --dash-card:   #131929;
+  --dash-border: #1e2d4a;
+  --dash-muted:  #94a3b8;
+  /* Akzent (Standard: Indigo) */
+  --a-600: #4f46e5;
+  --a-500: #6366f1;
+  --a-400: #818cf8;
+  --a-900: #1e1b4b;
+  --a-900-hex: 30 27 75;
+}
+
+/* ── Theme: Midnight (AMOLED) ───────────────────────────────── */
+[data-theme="midnight"] {
+  --dash-bg-rgb:     5 5 8;
+  --dash-card-rgb:   10 10 16;
+  --dash-border-rgb: 22 22 38;
+  --dash-muted-rgb:  148 163 184;
+  --dash-bg:     #050508;
+  --dash-card:   #0a0a10;
+  --dash-border: #161626;
+  --dash-muted:  #94a3b8;
+}
+
+/* ── Theme: Slate ───────────────────────────────────────────── */
+[data-theme="slate"] {
+  --dash-bg-rgb:     15 23 42;
+  --dash-card-rgb:   22 33 62;
+  --dash-border-rgb: 30 41 82;
+  --dash-muted-rgb:  148 163 184;
+  --dash-bg:     #0f172a;
+  --dash-card:   #162133;
+  --dash-border: #1e2952;
+  --dash-muted:  #94a3b8;
+}
+
+/* ── Theme: Forest ─────────────────────────────────────────── */
+[data-theme="forest"] {
+  --dash-bg-rgb:     4 12 7;
+  --dash-card-rgb:   7 20 12;
+  --dash-border-rgb: 14 38 22;
+  --dash-muted-rgb:  134 167 143;
+  --dash-bg:     #040c07;
+  --dash-card:   #07140c;
+  --dash-border: #0e2616;
+  --dash-muted:  #86a78f;
+}
+
+/* ── Theme: Cosmos ──────────────────────────────────────────── */
+[data-theme="cosmos"] {
+  --dash-bg-rgb:     6 4 14;
+  --dash-card-rgb:   10 7 22;
+  --dash-border-rgb: 20 14 42;
+  --dash-muted-rgb:  148 138 184;
+  --dash-bg:     #06040e;
+  --dash-card:   #0a0716;
+  --dash-border: #140e2a;
+  --dash-muted:  #948ab8;
+}
+
+/* ── Theme: Charcoal ────────────────────────────────────────── */
+[data-theme="charcoal"] {
+  --dash-bg-rgb:     10 10 10;
+  --dash-card-rgb:   18 18 18;
+  --dash-border-rgb: 36 36 36;
+  --dash-muted-rgb:  156 163 175;
+  --dash-bg:     #0a0a0a;
+  --dash-card:   #121212;
+  --dash-border: #242424;
+  --dash-muted:  #9ca3af;
+}
+
+/* ── Akzent-Utilities ───────────────────────────────────────── */
+@layer utilities {
+  .bg-accent         { background-color: var(--a-500); }
+  .bg-accent-600     { background-color: var(--a-600); }
+  .bg-accent-soft    { background-color: rgb(var(--a-900-hex, 30 27 75) / 0.4); }
+  .text-accent       { color: var(--a-400); }
+  .border-accent     { border-color: rgb(var(--a-900-hex, 30 27 75) / 0.5); }
+  .shadow-accent     { box-shadow: 0 4px 14px 0 rgb(var(--a-900-hex, 30 27 75) / 0.4); }
+}
+
 :root {
   --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 body {
-  background-color: #0b0f1a;
+  background-color: var(--dash-bg);
   color: #e2e8f0;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: #0b0f1a;
-}
-::-webkit-scrollbar-thumb {
-  background: #1e2d4a;
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #2d4a7a;
-}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--dash-bg); }
+::-webkit-scrollbar-thumb { background: var(--dash-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #2d4a7a; }

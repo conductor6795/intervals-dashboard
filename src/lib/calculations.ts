@@ -31,7 +31,9 @@ export function calcHRV7(days: WellnessDay[]): number | null {
   return parseFloat(mean(values).toFixed(1));
 }
 
-/** CV (Variationskoeffizient) der letzten 7 HRV-Werte in % */
+/** CV (Variationskoeffizient) der letzten 7 HRV-Werte in %
+ *  Schwellenwert 6,5 % nach Plews et al. 2012 – trainierte Athleten können
+ *  niedrigere individuelle Werte aufweisen. */
 export function calcCV(days: WellnessDay[]): number | null {
   const values = days
     .slice(-7)
@@ -49,11 +51,21 @@ export function calcTrendRatio(todayHRV: number | null, hrv7: number | null): nu
   return parseFloat(((todayHRV / hrv7) * 100).toFixed(1));
 }
 
+/** Schlafdauer in Stunden → Score 0-100 (Bell-Curve, Optimum 7,5–8,5 h)
+ *  Basis: Hirshkowitz et al. 2015 (NSF-Empfehlungen), Walker 2017 */
+function sleepHoursToScore(hours: number): number {
+  if (hours < 4) return clamp(hours * 7.5, 0, 30);
+  if (hours < 7) return clamp(30 + (hours - 4) * 20, 30, 90);
+  if (hours <= 9) return clamp(90 + (hours - 7) * 5, 90, 100);
+  // Übersclafen: leichte Abwertung ab 9h (Walker 2017)
+  return clamp(100 - (hours - 9) * 12, 60, 100);
+}
+
 /**
- * CV-Ampel nach dem 4-Felder-Modell:
+ * CV-Ampel nach dem 4-Felder-Modell (Plews et al. 2013):
  *  - Grün:   HRV über Durchschnitt (Trend ≥ 100) + CV niedrig (< 6,5 %)
  *  - Gelb:   HRV über Durchschnitt + CV hoch (≥ 6,5 %)
- *  - Orange: HRV unter Durchschnitt (Trend < 100) + CV niedrig
+ *  - Orange: HRV unter Durchschnitt + CV niedrig
  *  - Rot:    HRV unter Durchschnitt + CV hoch
  */
 export function calcCVZone(
@@ -68,31 +80,27 @@ export function calcCVZone(
     return {
       zone: "green",
       label: "Optimal – Hart trainieren",
-      advice:
-        "HRV über Durchschnitt, stabile Variabilität. Intensives Training möglich.",
+      advice: "HRV über Durchschnitt, stabile Variabilität. Intensives Training möglich.",
     };
   }
   if (aboveAvg && !lowCV) {
     return {
       zone: "yellow",
       label: "Variabel – Moderat trainieren",
-      advice:
-        "HRV über Durchschnitt, aber hohe Variabilität. Signal unsicher – moderate Intensität empfohlen.",
+      advice: "HRV über Durchschnitt, aber hohe Variabilität. Signal unsicher – moderate Intensität empfohlen.",
     };
   }
   if (!aboveAvg && lowCV) {
     return {
       zone: "orange",
       label: "Erholt/Müde – Leicht trainieren",
-      advice:
-        "HRV unter Durchschnitt, stabile Variabilität. Regenerationseinheit oder lockeres Training.",
+      advice: "HRV unter Durchschnitt, stabile Variabilität. Regenerationseinheit oder lockeres Training.",
     };
   }
   return {
     zone: "red",
     label: "Überlastet – Ruhetag",
-    advice:
-      "HRV unter Durchschnitt und hohe Variabilität. Ruhe oder aktive Erholung empfohlen.",
+    advice: "HRV unter Durchschnitt und hohe Variabilität. Ruhe oder aktive Erholung empfohlen.",
   };
 }
 
@@ -107,7 +115,9 @@ function rhrBaseline(days: WellnessDay[]): number {
 
 /**
  * Trainingsbereitschaft 0–100
- * Gewichtung: HRV-Trend 35 %, Schlaf 20 %, RHR 15 %, Subjektiv 20 %, CV-Stabilität 10 %
+ * Gewichtung (2026, basierend auf Buchheit 2014, Plews et al. 2013):
+ *   HRV-Trend 40 % · Schlaf 25 % · RHR 15 % · Subjektiv 15 % · CV-Stabilität 5 %
+ * Subjektiv: Erschöpfung 35 % · Muskelkater 30 % · Stimmung 20 % · Motivation 15 %
  */
 export function calcTrainingReadiness(
   today: WellnessDay,
@@ -118,48 +128,47 @@ export function calcTrainingReadiness(
   const cv = calcCV(allDays);
   const trend = hrv !== null && hrv7 !== null ? (hrv / hrv7) * 100 : 100;
 
-  // HRV-Trend: 70–130 → 0–100
+  // HRV-Trend: 70–130 % → 0–100
   const hrvScore = clamp(((trend - 70) / 60) * 100, 0, 100);
 
-  // Schlaf-Score (direkt von intervals falls vorhanden, sonst Stunden-basiert)
+  // Schlaf (Bell-Curve basiertes Scoring)
   let sleepScore = 50;
   if (today.sleepScore != null) {
     sleepScore = clamp(today.sleepScore, 0, 100);
   } else if (today.sleepSecs != null) {
-    const hours = today.sleepSecs / 3600;
-    sleepScore = clamp(((hours - 4) / 5) * 100, 0, 100);
+    sleepScore = sleepHoursToScore(today.sleepSecs / 3600);
   }
 
-  // RHR: Abweichung von 28-Tage-Baseline
+  // RHR: Abweichung von 28-Tage-Baseline (+10 bpm = 0, -10 bpm = 100)
   const baseline = rhrBaseline(allDays);
   const rhrScore =
     today.restingHR != null
       ? clamp(50 + (baseline - today.restingHR) * 5, 0, 100)
       : 50;
 
-  // Subjektive Metriken (je 1–5, 5 = ideal)
+  // Subjektive Metriken – Erschöpfung/Kater stärker gewichtet (direkte Performance-Prädiktoren)
   const fatigue = today.fatigue != null ? (5 - today.fatigue) / 4 : 0.5;
   const soreness = today.soreness != null ? (5 - today.soreness) / 4 : 0.5;
   const mood = today.mood != null ? (today.mood - 1) / 4 : 0.5;
   const motivation = today.motivation != null ? (today.motivation - 1) / 4 : 0.5;
-  const subjectiveScore = ((fatigue + soreness + mood + motivation) / 4) * 100;
+  const subjectiveScore = (fatigue * 0.35 + soreness * 0.30 + mood * 0.20 + motivation * 0.15) * 100;
 
-  // CV-Stabilität: niedriger CV = stabiler = besser
+  // CV-Stabilität (sekundär)
   const cvScore = cv != null ? clamp(((10 - cv) / 10) * 100, 0, 100) : 50;
 
   const readiness = Math.round(
-    hrvScore * 0.35 +
-      sleepScore * 0.2 +
-      rhrScore * 0.15 +
-      subjectiveScore * 0.2 +
-      cvScore * 0.1
+    hrvScore * 0.40 +
+    sleepScore * 0.25 +
+    rhrScore * 0.15 +
+    subjectiveScore * 0.15 +
+    cvScore * 0.05
   );
   return clamp(readiness, 0, 100);
 }
 
 /**
  * Erholungswert 0–100 %
- * Gewichtung: HRV-Ratio 40 %, Schlaf 30 %, RHR 20 %, Muskelkater 10 %
+ * Gewichtung: HRV-Ratio 40 % · Schlaf 30 % · RHR 15 % · Ermüdung+Kater 15 %
  */
 export function calcRecoveryScore(
   today: WellnessDay,
@@ -174,8 +183,7 @@ export function calcRecoveryScore(
   if (today.sleepScore != null) {
     sleepRecovery = clamp(today.sleepScore, 0, 100);
   } else if (today.sleepSecs != null) {
-    const hours = today.sleepSecs / 3600;
-    sleepRecovery = clamp(((hours - 4) / 5) * 100, 0, 100);
+    sleepRecovery = sleepHoursToScore(today.sleepSecs / 3600);
   }
 
   const baseline = rhrBaseline(allDays);
@@ -184,14 +192,15 @@ export function calcRecoveryScore(
       ? clamp(50 + (baseline - today.restingHR) * 5, 0, 100)
       : 50;
 
-  const sorenessScore =
-    today.soreness != null ? ((5 - today.soreness) / 4) * 100 : 50;
+  const sorenessScore = today.soreness != null ? ((5 - today.soreness) / 4) * 100 : 50;
+  const fatigueScore = today.fatigue != null ? ((5 - today.fatigue) / 4) * 100 : 50;
+  const physicalScore = (sorenessScore + fatigueScore) / 2;
 
   const recovery = Math.round(
-    hrvRecovery * 0.4 +
-      sleepRecovery * 0.3 +
-      rhrRecovery * 0.2 +
-      sorenessScore * 0.1
+    hrvRecovery * 0.40 +
+    sleepRecovery * 0.30 +
+    rhrRecovery * 0.15 +
+    physicalScore * 0.15
   );
   return clamp(recovery, 0, 100);
 }
@@ -206,6 +215,28 @@ export function buildDailyMetrics(days: WellnessDay[]): DayMetrics[] {
     const trendRatio = calcTrendRatio(todayHRV, hrv7);
     return { date: days[idx].id, hrv7, cv, trendRatio };
   });
+}
+
+/**
+ * Trend-Richtung für einen Messwert (Vergleich heute mit Ø der letzten N Tage).
+ * positiveIsGood: true = Anstieg = gut (grün), false = Anstieg = schlecht (z.B. RHR)
+ */
+export function calcValueTrend(
+  values: (number | null)[],
+  lookback = 5,
+  threshold = 0.03
+): "up" | "neutral" | "down" {
+  const valid = values.filter((v): v is number => v !== null);
+  if (valid.length < 2) return "neutral";
+  const latest = valid[valid.length - 1];
+  const prevSlice = valid.slice(-lookback - 1, -1);
+  if (prevSlice.length === 0) return "neutral";
+  const prevAvg = mean(prevSlice);
+  if (prevAvg === 0) return "neutral";
+  const change = (latest - prevAvg) / Math.abs(prevAvg);
+  if (change > threshold) return "up";
+  if (change < -threshold) return "down";
+  return "neutral";
 }
 
 /** Alle Kennzahlen für den letzten verfügbaren Tag */
