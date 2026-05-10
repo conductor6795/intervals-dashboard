@@ -51,14 +51,34 @@ export function calcTrendRatio(todayHRV: number | null, hrv7: number | null): nu
   return parseFloat(((todayHRV / hrv7) * 100).toFixed(1));
 }
 
-/** Schlafdauer in Stunden → Score 0-100 (Bell-Curve, Optimum 7,5–8,5 h)
- *  Basis: Hirshkowitz et al. 2015 (NSF-Empfehlungen), Walker 2017 */
+/**
+ * HRV-Trend → Score 0–100
+ * Normaler Schwankungsbereich 85–115 % des 7-Tage-Ø gilt als gut (Score 50–100).
+ * Exakt am Ø (100 %) → ~75 Punkte; unter 85 % → 0–50 (linear); über 115 % → 100 (Bonus, gedeckelt).
+ * Damit ist der theoretische Maximalwert bei durchschnittlicher HRV ~75 statt ~50.
+ */
+function hrvTrendScore(trend: number): number {
+  if (trend > 115) return 100;
+  if (trend >= 85) return 50 + ((trend - 85) / 30) * 50;
+  return (trend / 85) * 50;
+}
+
+/**
+ * Schlafdauer in Stunden → Score 0–100
+ * Piecewise-Formel nach NSF-Empfehlungen (Hirshkowitz et al. 2015):
+ *   ≤ 4h → 0        (extremer Schlafmangel)
+ *   4–6h → 0–30     (starker Schlafmangel)
+ *   6–7h → 30–70    (unter Empfehlung)
+ *   7–9h → 70–100   (empfohlener Bereich, Optimum bei 9h)
+ *   > 9h → 80–100   (leichter Abfall)
+ * Quelle: Notion – Berechnungsformeln (Einzige Quelle der Wahrheit)
+ */
 function sleepHoursToScore(hours: number): number {
-  if (hours < 4) return clamp(hours * 7.5, 0, 30);
-  if (hours < 7) return clamp(30 + (hours - 4) * 20, 30, 90);
-  if (hours <= 9) return clamp(90 + (hours - 7) * 5, 90, 100);
-  // Übersclafen: leichte Abwertung ab 9h (Walker 2017)
-  return clamp(100 - (hours - 9) * 12, 60, 100);
+  if (hours <= 4) return 0;
+  if (hours <= 6) return clamp(((hours - 4) / 2) * 30, 0, 30);
+  if (hours <= 7) return clamp(30 + (hours - 6) * 40, 30, 70);
+  if (hours <= 9) return clamp(70 + ((hours - 7) / 2) * 30, 70, 100);
+  return clamp(100 - (hours - 9) * 10, 80, 100);
 }
 
 /**
@@ -115,9 +135,9 @@ function rhrBaseline(days: WellnessDay[]): number {
 
 /**
  * Trainingsbereitschaft 0–100
- * Gewichtung (2026, basierend auf Buchheit 2014, Plews et al. 2013):
- *   HRV-Trend 40 % · Schlaf 25 % · RHR 15 % · Subjektiv 15 % · CV-Stabilität 5 %
- * Subjektiv: Erschöpfung 35 % · Muskelkater 30 % · Stimmung 20 % · Motivation 15 %
+ * Gewichtung (Notion – Einzige Quelle der Wahrheit):
+ *   HRV-Trend 35 % · Schlaf 20 % · RHR 15 % · Subjektiv 20 % · CV-Stabilität 10 %
+ * Subjektiv: Erschöpfung / Kater / Stimmung / Motivation gleichgewichtet (je 25 %)
  */
 export function calcTrainingReadiness(
   today: WellnessDay,
@@ -128,10 +148,9 @@ export function calcTrainingReadiness(
   const cv = calcCV(allDays);
   const trend = hrv !== null && hrv7 !== null ? (hrv / hrv7) * 100 : 100;
 
-  // HRV-Trend: 70–130 % → 0–100
-  const hrvScore = clamp(((trend - 70) / 60) * 100, 0, 100);
+  const hrvScore = hrvTrendScore(trend);
 
-  // Schlaf (Bell-Curve basiertes Scoring)
+  // Schlaf
   let sleepScore = 50;
   if (today.sleepScore != null) {
     sleepScore = clamp(today.sleepScore, 0, 100);
@@ -146,29 +165,30 @@ export function calcTrainingReadiness(
       ? clamp(50 + (baseline - today.restingHR) * 5, 0, 100)
       : 50;
 
-  // Subjektive Metriken – Erschöpfung/Kater stärker gewichtet (direkte Performance-Prädiktoren)
+  // Subjektiv: alle vier Faktoren gleichgewichtet (je 25 %)
   const fatigue = today.fatigue != null ? (5 - today.fatigue) / 4 : 0.5;
   const soreness = today.soreness != null ? (5 - today.soreness) / 4 : 0.5;
   const mood = today.mood != null ? (today.mood - 1) / 4 : 0.5;
   const motivation = today.motivation != null ? (today.motivation - 1) / 4 : 0.5;
-  const subjectiveScore = (fatigue * 0.35 + soreness * 0.30 + mood * 0.20 + motivation * 0.15) * 100;
+  const subjectiveScore = ((fatigue + soreness + mood + motivation) / 4) * 100;
 
-  // CV-Stabilität (sekundär)
+  // CV-Stabilität
   const cvScore = cv != null ? clamp(((10 - cv) / 10) * 100, 0, 100) : 50;
 
   const readiness = Math.round(
-    hrvScore * 0.40 +
-    sleepScore * 0.25 +
+    hrvScore * 0.35 +
+    sleepScore * 0.20 +
     rhrScore * 0.15 +
-    subjectiveScore * 0.15 +
-    cvScore * 0.05
+    subjectiveScore * 0.20 +
+    cvScore * 0.10
   );
   return clamp(readiness, 0, 100);
 }
 
 /**
  * Erholungswert 0–100 %
- * Gewichtung: HRV-Ratio 40 % · Schlaf 30 % · RHR 15 % · Ermüdung+Kater 15 %
+ * Gewichtung (Notion – Einzige Quelle der Wahrheit):
+ *   HRV-Ratio 40 % · Schlaf 30 % · RHR 20 % · Muskelkater 10 %
  */
 export function calcRecoveryScore(
   today: WellnessDay,
@@ -177,7 +197,7 @@ export function calcRecoveryScore(
   const hrv = getHRV(today);
   const hrv7 = calcHRV7(allDays);
   const trend = hrv !== null && hrv7 !== null ? (hrv / hrv7) * 100 : 100;
-  const hrvRecovery = clamp(((trend - 70) / 60) * 100, 0, 100);
+  const hrvRecovery = hrvTrendScore(trend);
 
   let sleepRecovery = 50;
   if (today.sleepScore != null) {
@@ -192,15 +212,14 @@ export function calcRecoveryScore(
       ? clamp(50 + (baseline - today.restingHR) * 5, 0, 100)
       : 50;
 
+  // Nur Muskelkater (kein Fatigue) – laut Notion
   const sorenessScore = today.soreness != null ? ((5 - today.soreness) / 4) * 100 : 50;
-  const fatigueScore = today.fatigue != null ? ((5 - today.fatigue) / 4) * 100 : 50;
-  const physicalScore = (sorenessScore + fatigueScore) / 2;
 
   const recovery = Math.round(
     hrvRecovery * 0.40 +
     sleepRecovery * 0.30 +
-    rhrRecovery * 0.15 +
-    physicalScore * 0.15
+    rhrRecovery * 0.20 +
+    sorenessScore * 0.10
   );
   return clamp(recovery, 0, 100);
 }

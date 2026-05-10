@@ -5,6 +5,7 @@ export interface WellnessDay {
   rampRate?: number;
   ctlLoad?: number;
   atlLoad?: number;
+  strain?: number;    // intervals.icu täglicher Trainingsbelastungswert (falls vorhanden)
   hrv?: number;
   hrv4t?: number;
   restingHR?: number;
@@ -39,6 +40,7 @@ export interface Activity {
   max_watts?: number;
   description?: string;
   race?: boolean;
+  commute?: boolean;
 }
 
 export interface IntervalsEvent {

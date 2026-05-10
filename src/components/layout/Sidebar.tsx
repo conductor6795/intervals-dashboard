@@ -1,10 +1,12 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart2, Calendar, Heart, Settings, TrendingUp, Zap, X, Activity, GitCompare } from "lucide-react";
+import { BarChart2, Calendar, FlaskConical, Heart, Scale, Settings, TrendingUp, Zap, X, Activity, GitCompare, Dumbbell } from "lucide-react";
 import { clsx } from "clsx";
+import { useState, useEffect } from "react";
+import { getPageSettings } from "@/lib/settings";
 
-const NAV = [
+const NAV_ALWAYS = [
   { href: "/", label: "Übersicht", icon: Zap },
   { href: "/hrv", label: "HRV & Erholung", icon: Heart },
   { href: "/fitness", label: "Fitness-Trend", icon: TrendingUp },
@@ -12,7 +14,12 @@ const NAV = [
   { href: "/performance", label: "Leistungsdaten", icon: Activity },
   { href: "/compare", label: "Vergleich", icon: GitCompare },
   { href: "/calendar", label: "Kalender", icon: Calendar },
-  { href: "/settings", label: "Einstellungen", icon: Settings },
+];
+
+const NAV_TOGGLEABLE = [
+  { href: "/training", label: "Training", icon: Dumbbell, id: "training" },
+  { href: "/koerper",  label: "Körper & Ziele", icon: Scale, id: "koerper" },
+  { href: "/analyse",  label: "Analyse", icon: FlaskConical, id: "analyse" },
 ];
 
 interface Props {
@@ -22,6 +29,28 @@ interface Props {
 
 export default function Sidebar({ isOpen = true, onClose }: Props) {
   const pathname = usePathname();
+  const [pageSettings, setPageSettings] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(NAV_TOGGLEABLE.map((p) => [p.id, true]))
+  );
+
+  useEffect(() => {
+    setPageSettings(getPageSettings());
+    const refresh = () => setPageSettings(getPageSettings());
+    window.addEventListener("page-settings-changed", refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener("page-settings-changed", refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+
+  const nav = [
+    ...NAV_ALWAYS,
+    ...NAV_TOGGLEABLE.filter((p) => pageSettings[p.id] !== false),
+  ].sort((a, b) => {
+    const order = ["/", "/hrv", "/fitness", "/training", "/wellness", "/koerper", "/analyse", "/performance", "/compare", "/calendar"];
+    return order.indexOf(a.href) - order.indexOf(b.href);
+  });
 
   return (
     <aside
@@ -55,7 +84,7 @@ export default function Sidebar({ isOpen = true, onClose }: Props) {
 
       {/* Nav */}
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-        {NAV.map(({ href, label, icon: Icon }) => {
+        {nav.map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
           return (
             <Link
@@ -76,8 +105,24 @@ export default function Sidebar({ isOpen = true, onClose }: Props) {
         })}
       </nav>
 
-      <div className="p-3 border-t border-dash-border">
-        <p className="text-[10px] text-dash-muted/40 text-center">intervals.icu Dashboard</p>
+      <div className="p-3 border-t border-dash-border space-y-0.5">
+        {(() => {
+          const active = pathname.startsWith("/einstellungen");
+          return (
+            <Link
+              href="/einstellungen"
+              className={clsx(
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-150",
+                active ? "text-white shadow-lg" : "text-dash-muted hover:text-white hover:bg-white/5"
+              )}
+              style={active ? { backgroundColor: "var(--a-600)", boxShadow: "0 4px 12px rgb(var(--a-900-hex,30 27 75)/0.4)" } : {}}
+            >
+              <Settings size={15} />
+              Einstellungen
+            </Link>
+          );
+        })()}
+        <p className="text-[10px] text-dash-muted/40 text-center pt-1">intervals.icu Dashboard</p>
       </div>
     </aside>
   );

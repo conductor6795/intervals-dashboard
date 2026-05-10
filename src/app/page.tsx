@@ -1,6 +1,6 @@
 "use client";
-import { useMemo } from "react";
-import { RefreshCw, Heart, TrendingUp, Moon, Zap, Activity } from "lucide-react";
+import { useMemo, useState, useEffect } from "react";
+import { RefreshCw, Heart, Scale, TrendingUp, Moon, Zap, Activity, Dumbbell } from "lucide-react";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { clsx } from "clsx";
@@ -11,11 +11,14 @@ import TrendArrow from "@/components/ui/TrendArrow";
 import TrainingReadiness from "@/components/metrics/TrainingReadiness";
 import RecoveryScore from "@/components/metrics/RecoveryScore";
 import CVAmpelCompact from "@/components/metrics/CVAmpelCompact";
+import PeriodSelector from "@/components/ui/PeriodSelector";
 
 import { useWellness } from "@/hooks/useWellness";
 import { useActivities, useEvents } from "@/hooks/useActivities";
+import { usePeriod } from "@/hooks/usePeriod";
 import { calcAllMetrics, getHRV, calcValueTrend } from "@/lib/calculations";
 import { WellnessDay } from "@/lib/types";
+import { getPageSettings } from "@/lib/settings";
 
 function Skeleton({ className }: { className?: string }) {
   return <div className={clsx("animate-pulse rounded-2xl bg-dash-card border border-dash-border", className)} />;
@@ -54,48 +57,58 @@ function MetricCard({ label, value, unit, color = "text-white", icon, sub, trend
     </div>
   );
 
-  if (href) {
-    return <Link href={href}>{inner}</Link>;
-  }
+  if (href) return <Link href={href}>{inner}</Link>;
   return inner;
 }
 
 function buildTrends(wellness: WellnessDay[]) {
-  const hrs = wellness.map(getHRV);
-  const rhrs = wellness.map((d) => d.restingHR ?? null);
-  const ctls = wellness.map((d) => d.ctl ?? null);
-  const atls = wellness.map((d) => d.atl ?? null);
-  const tsbs = wellness.map((d) => {
+  const hrs   = wellness.map(getHRV);
+  const rhrs  = wellness.map((d) => d.restingHR ?? null);
+  const ctls  = wellness.map((d) => d.ctl ?? null);
+  const atls  = wellness.map((d) => d.atl ?? null);
+  const tsbs  = wellness.map((d) => {
     const c = d.ctl; const a = d.atl;
     return c != null && a != null ? c - a : null;
   });
   const sleeps = wellness.map((d) =>
     d.sleepScore != null ? d.sleepScore : d.sleepSecs != null ? d.sleepSecs / 3600 : null
   );
-
   return {
-    hrv: calcValueTrend(hrs),
-    rhr: calcValueTrend(rhrs),
-    ctl: calcValueTrend(ctls),
-    atl: calcValueTrend(atls),
-    tsb: calcValueTrend(tsbs),
+    hrv:   calcValueTrend(hrs),
+    rhr:   calcValueTrend(rhrs),
+    ctl:   calcValueTrend(ctls),
+    atl:   calcValueTrend(atls),
+    tsb:   calcValueTrend(tsbs),
     sleep: calcValueTrend(sleeps),
   };
 }
 
 export default function OverviewPage() {
-  const { data: wellness, loading: wLoading, error: wError, refetch: refetchWellness } = useWellness(90);
-  const { activities, loading: aLoading, refetch: refetchActivities } = useActivities(14);
+  const { period, setPeriod, days } = usePeriod("30d");
+  const [pageSettings, setPageSettings] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    setPageSettings(getPageSettings());
+    const refresh = () => setPageSettings(getPageSettings());
+    window.addEventListener("page-settings-changed", refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener("page-settings-changed", refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+
+  const { data: wellness, loading: wLoading, error: wError, refetch: refetchWellness } = useWellness(days);
+  const { activities, loading: aLoading, refetch: refetchActivities } = useActivities(days);
   const { events } = useEvents();
 
   const metrics = useMemo(() => calcAllMetrics(wellness), [wellness]);
-  const trends = useMemo(() => buildTrends(wellness), [wellness]);
+  const trends  = useMemo(() => buildTrends(wellness), [wellness]);
 
-  const today = wellness[wellness.length - 1];
-  const todayHRV = today ? getHRV(today) : null;
-  const latestCTL = today?.ctl;
-  const latestATL = today?.atl;
-  const latestTSB = latestCTL != null && latestATL != null ? latestCTL - latestATL : null;
+  const today      = wellness[wellness.length - 1];
+  const todayHRV   = today ? getHRV(today) : null;
+  const latestCTL  = today?.ctl;
+  const latestATL  = today?.atl;
+  const latestTSB  = latestCTL != null && latestATL != null ? latestCTL - latestATL : null;
   const athleteName = process.env.NEXT_PUBLIC_ATHLETE_NAME ?? "Athlet";
 
   const isLoading = wLoading || aLoading;
@@ -103,21 +116,24 @@ export default function OverviewPage() {
   return (
     <>
       {/* Top Bar */}
-      <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-6 py-3 flex items-center justify-between">
+      <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-6 py-3 flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-sm font-semibold text-white">{athleteName}</h1>
           <p className="text-[10px] text-dash-muted">
             {format(new Date(), "EEEE, d. MMMM yyyy", { locale: de })}
           </p>
         </div>
-        <button
-          onClick={() => { refetchWellness(); refetchActivities(); }}
-          disabled={isLoading}
-          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors disabled:opacity-50"
-        >
-          <RefreshCw size={12} className={isLoading ? "animate-spin" : ""} />
-          Aktualisieren
-        </button>
+        <div className="flex items-center gap-2">
+          <PeriodSelector value={period} onChange={setPeriod} />
+          <button
+            onClick={() => { refetchWellness(); refetchActivities(); }}
+            disabled={isLoading}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-white/30 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={12} className={isLoading ? "animate-spin" : ""} />
+            <span className="hidden sm:inline">Aktualisieren</span>
+          </button>
+        </div>
       </header>
 
       {wError && (
@@ -170,9 +186,7 @@ export default function OverviewPage() {
 
         {/* Kennzahlen mit Trend-Pfeilen */}
         <section>
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium">Kennzahlen</p>
-          </div>
+          <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">Kennzahlen</p>
           {isLoading ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
@@ -242,7 +256,7 @@ export default function OverviewPage() {
           <section>
             <div className="flex items-center justify-between mb-3">
               <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium">Wellness heute</p>
-              <Link href="/wellness" className="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors">
+              <Link href="/wellness" className="text-[10px] text-accent hover:opacity-80 transition-opacity">
                 Alle Daten →
               </Link>
             </div>
@@ -295,13 +309,16 @@ export default function OverviewPage() {
         {/* Quick-Links */}
         <section>
           <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">Bereiche</p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {[
-              { href: "/hrv", label: "HRV & Erholung", desc: "HRV-Trend, CV-Ampel, Readiness", icon: Heart, color: "text-pink-400", bg: "bg-pink-500/10 border-pink-500/20" },
-              { href: "/fitness", label: "Fitness-Trend", desc: "CTL, ATL, TSB, PMC-Chart", icon: TrendingUp, color: "text-blue-400", bg: "bg-blue-500/10 border-blue-500/20" },
-              { href: "/wellness", label: "Wellness", desc: "Schlaf, Stimmung, Vergleiche", icon: Activity, color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20" },
-              { href: "/calendar", label: "Kalender", desc: "Geplante Workouts & Events", icon: Zap, color: "text-indigo-400", bg: "bg-indigo-500/10 border-indigo-500/20" },
-            ].map(({ href, label, desc, icon: Icon, color, bg }) => (
+              { href: "/hrv",      label: "HRV & Erholung",  desc: "HRV-Trend, CV-Ampel, Readiness",   icon: Heart,     color: "text-pink-400",   bg: "bg-pink-500/10 border-pink-500/20",   pageId: null },
+              { href: "/fitness",  label: "Fitness-Trend",   desc: "CTL, ATL, TSB, PMC-Chart",         icon: TrendingUp, color: "text-blue-400",  bg: "bg-blue-500/10 border-blue-500/20",   pageId: null },
+              { href: "/training", label: "Training",         desc: "Wöchentliche Aktivitäts-Charts",   icon: Dumbbell,  color: "text-orange-400", bg: "bg-orange-500/10 border-orange-500/20", pageId: "training" },
+              { href: "/wellness", label: "Wellness",         desc: "Schlaf, Stimmung, Vergleiche",     icon: Activity,  color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20", pageId: null },
+              { href: "/koerper",  label: "Körper & Ziele",  desc: "Gewicht, Trends & Projektion",     icon: Scale,     color: "text-yellow-400", bg: "bg-yellow-500/10 border-yellow-500/20", pageId: "koerper" },
+              { href: "/calendar", label: "Kalender",         desc: "Geplante Workouts & Events",       icon: Zap,       color: "text-indigo-400", bg: "bg-indigo-500/10 border-indigo-500/20", pageId: null },
+            ].filter(({ pageId }) => pageId === null || pageSettings[pageId] !== false)
+             .map(({ href, label, desc, icon: Icon, color, bg }) => (
               <Link
                 key={href}
                 href={href}

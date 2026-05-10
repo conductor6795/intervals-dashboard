@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
     `${BASE}/${athleteId}/activities?oldest=${oldest}&newest=${newest}` +
     `&fields=id,start_date_local,type,name,moving_time,elapsed_time,distance,` +
     `total_elevation_gain,average_heartrate,max_heartrate,icu_training_load,` +
-    `icu_intensity,average_watts,race`;
+    `icu_intensity,average_watts,max_watts,race,commute`;
 
   try {
     const res = await fetch(url, {
