@@ -8,6 +8,7 @@ import Link from "next/link";
 
 import TodayWorkout from "@/components/overview/TodayWorkout";
 import TrendArrow from "@/components/ui/TrendArrow";
+import Tooltip from "@/components/ui/Tooltip";
 import TrainingReadiness from "@/components/metrics/TrainingReadiness";
 import RecoveryScore from "@/components/metrics/RecoveryScore";
 import CVAmpelCompact from "@/components/metrics/CVAmpelCompact";
@@ -25,7 +26,7 @@ function Skeleton({ className }: { className?: string }) {
 }
 
 interface MetricCardProps {
-  label: string;
+  label: React.ReactNode;
   value: string | number | null;
   unit?: string;
   color?: string;
@@ -194,7 +195,7 @@ export default function OverviewPage() {
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               <MetricCard
-                label="HRV"
+                label={<Tooltip term="HRV">HRV</Tooltip>}
                 value={todayHRV != null ? todayHRV.toFixed(1) : null}
                 icon={<Heart size={10} />}
                 color={todayHRV && metrics.hrv7 && todayHRV >= metrics.hrv7 ? "text-emerald-400" : "text-orange-400"}
@@ -214,7 +215,7 @@ export default function OverviewPage() {
                 href="/hrv"
               />
               <MetricCard
-                label="CV"
+                label={<Tooltip term="CV">CV</Tooltip>}
                 value={metrics.cv != null ? `${metrics.cv.toFixed(1)}` : null}
                 unit="%"
                 color={metrics.cv != null && metrics.cv < 6.5 ? "text-emerald-400" : "text-yellow-400"}
@@ -222,7 +223,7 @@ export default function OverviewPage() {
                 href="/hrv"
               />
               <MetricCard
-                label="CTL (Fitness)"
+                label={<Tooltip term="CTL">CTL (Fitness)</Tooltip>}
                 value={latestCTL != null ? latestCTL.toFixed(1) : null}
                 icon={<TrendingUp size={10} />}
                 color="text-blue-400"
@@ -231,7 +232,7 @@ export default function OverviewPage() {
                 href="/fitness"
               />
               <MetricCard
-                label="ATL (Ermüdung)"
+                label={<Tooltip term="ATL">ATL (Ermüdung)</Tooltip>}
                 value={latestATL != null ? latestATL.toFixed(1) : null}
                 color="text-orange-400"
                 trend={trends.atl}
@@ -239,7 +240,7 @@ export default function OverviewPage() {
                 href="/fitness"
               />
               <MetricCard
-                label="TSB (Form)"
+                label={<Tooltip term="TSB">TSB (Form)</Tooltip>}
                 value={latestTSB != null ? latestTSB.toFixed(1) : null}
                 color={latestTSB != null && latestTSB >= 0 ? "text-emerald-400" : "text-orange-400"}
                 sub={latestTSB != null ? (latestTSB >= 5 ? "Frisch" : latestTSB >= 0 ? "Neutral" : "Ermüdet") : undefined}

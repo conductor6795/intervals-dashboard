@@ -5,6 +5,8 @@ import { clsx } from "clsx";
 import { useWellness } from "@/hooks/useWellness";
 import { useActivities } from "@/hooks/useActivities";
 import HRVFactorChart from "@/components/wellness/HRVFactorChart";
+import { usePeriod } from "@/hooks/usePeriod";
+import PeriodSelector from "@/components/ui/PeriodSelector";
 
 function Skeleton({ className }: { className?: string }) {
   return (
@@ -18,9 +20,10 @@ function Skeleton({ className }: { className?: string }) {
 }
 
 export default function AnalysePage() {
+  const { period, setPeriod, days } = usePeriod("1y");
   const { data: wellness, loading: wLoading, error: wError, refetch: refetchWellness } =
-    useWellness(365);
-  const { activities, loading: aLoading, refetch: refetchActivities } = useActivities(365);
+    useWellness(days);
+  const { activities, loading: aLoading, refetch: refetchActivities } = useActivities(days);
 
   const isLoading = wLoading || aLoading;
 
@@ -31,14 +34,17 @@ export default function AnalysePage() {
           <h1 className="text-sm font-semibold text-white">Analyse</h1>
           <p className="text-[10px] text-dash-muted">Statistische Auswertung deiner Trainingsdaten</p>
         </div>
-        <button
-          onClick={() => { refetchWellness(); refetchActivities(); }}
-          disabled={isLoading}
-          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-white/30 transition-colors disabled:opacity-50"
-        >
-          <RefreshCw size={12} className={isLoading ? "animate-spin" : ""} />
-          <span className="hidden sm:inline">Aktualisieren</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <PeriodSelector value={period} onChange={setPeriod} />
+          <button
+            onClick={() => { refetchWellness(); refetchActivities(); }}
+            disabled={isLoading}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-white/30 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={12} className={isLoading ? "animate-spin" : ""} />
+            <span className="hidden sm:inline">Aktualisieren</span>
+          </button>
+        </div>
       </header>
 
       {wError && (

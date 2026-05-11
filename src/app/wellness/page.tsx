@@ -1,14 +1,17 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
 import { RefreshCw } from "lucide-react";
 import { clsx } from "clsx";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, Legend,
 } from "recharts";
-import { format, parseISO, startOfWeek, startOfMonth, getWeek, getMonth } from "date-fns";
+import { format, parseISO, startOfWeek } from "date-fns";
 import { de } from "date-fns/locale";
 
+import { usePeriod, Period } from "@/hooks/usePeriod";
+import PeriodSelector from "@/components/ui/PeriodSelector";
+import GlossaryTooltip from "@/components/ui/Tooltip";
 import { useWellness } from "@/hooks/useWellness";
 import { WellnessDay } from "@/lib/types";
 import { calcRecoveryScore, getHRV, calcHRV7 } from "@/lib/calculations";
@@ -21,7 +24,14 @@ function Skeleton({ className }: { className?: string }) {
 const TOOLTIP_STYLE = { backgroundColor: "#131929", border: "1px solid #1e2d4a", borderRadius: 8, fontSize: 11 };
 const TICK_STYLE = { fill: "#94a3b8", fontSize: 10 };
 
-type Period = "week" | "month" | "year";
+// Local view granularity derived from the global period
+type WellnessPeriod = "week" | "month" | "year";
+
+function toWellnessPeriod(p: Period): WellnessPeriod {
+  if (p === "7d") return "week";
+  if (p === "30d" || p === "3m") return "month";
+  return "year"; // 6m, ytd, 1y, all
+}
 
 interface MetricConfig {
   key: keyof WellnessDay;
@@ -32,10 +42,11 @@ interface MetricConfig {
   domain?: [number | "auto", number | "auto"];
   transform?: (v: number) => number;
   decimals?: number;
+  tooltipTerm?: string;
 }
 
 const METRICS: MetricConfig[] = [
-  { key: "restingHR", label: "Ruhepuls", color: "#ef4444", unit: " bpm", type: "line" },
+  { key: "restingHR", label: "Ruhepuls", color: "#ef4444", unit: " bpm", type: "line", tooltipTerm: "RHR" },
   { key: "weight", label: "Gewicht", color: "#8b5cf6", unit: " kg", type: "line" },
   { key: "sleepSecs", label: "Schlaf", color: "#3b82f6", unit: " h", type: "line", domain: [4, 10], transform: (v) => parseFloat((v / 3600).toFixed(2)), decimals: 1 },
   { key: "sleepScore", label: "Schlaf-Score", color: "#06b6d4", unit: "", type: "line", domain: [0, 100] },
@@ -92,24 +103,27 @@ function buildMonthData(wellness: WellnessDay[], metric: MetricConfig) {
   }));
 }
 
-function MiniChart({ metric, wellness, period }: { metric: MetricConfig; wellness: WellnessDay[]; period: Period }) {
+function MiniChart({ metric, wellness, period }: { metric: MetricConfig; wellness: WellnessDay[]; period: WellnessPeriod }) {
   const data = useMemo(() => {
-    if (period === "week") return buildRawData(wellness.slice(-7), metric);
-    if (period === "month") return buildWeekData(wellness.slice(-90), metric);
+    if (period === "week") return buildRawData(wellness, metric);
+    if (period === "month") return buildWeekData(wellness, metric);
     return buildMonthData(wellness, metric);
   }, [wellness, metric, period]);
 
   if (data.length === 0) return null;
 
-  const periodLabel = period === "week" ? "Diese Woche" : period === "month" ? "Letzte 3 Monate (Ø/Woche)" : "Letztes Jahr (Ø/Monat)";
+  const periodLabel = period === "week" ? "Täglich" : period === "month" ? "Ø/Woche" : "Ø/Monat";
 
   return (
     <div className="p-4 rounded-2xl border border-dash-border bg-dash-card">
       <div className="flex items-center justify-between mb-1">
-        <span className="text-xs text-dash-muted uppercase tracking-wider font-medium">{metric.label}</span>
+        <span className="text-xs text-dash-muted uppercase tracking-wider font-medium">
+          {metric.tooltipTerm
+            ? <GlossaryTooltip term={metric.tooltipTerm}>{metric.label}</GlossaryTooltip>
+            : metric.label}
+        </span>
         <span className="text-[10px] text-dash-muted/60">{periodLabel}</span>
       </div>
-      {/* Current value */}
       {data.length > 0 && (
         <p className="text-xl font-bold tabular-nums mb-3" style={{ color: metric.color }}>
           {data[data.length - 1].value}{metric.unit}
@@ -171,7 +185,7 @@ function TrendHeader({
   color,
   avg,
 }: {
-  label: string;
+  label: React.ReactNode;
   value: number | null | undefined;
   unit: string;
   color: string;
@@ -199,25 +213,14 @@ function TrendHeader({
   );
 }
 
-// ── Period config ─────────────────────────────────────────────────────────────
-
-const PERIODS: { key: Period; label: string; days: number }[] = [
-  { key: "week", label: "Woche", days: 7 },
-  { key: "month", label: "Monat", days: 90 },
-  { key: "year", label: "Jahr", days: 365 },
-];
-
 export default function WellnessPage() {
-  const [period, setPeriod] = useState<Period>("month");
-  const { data: wellness, loading, error, refetch } = useWellness(365);
+  const { period, setPeriod, days } = usePeriod("1y");
+  const { data: wellness, loading, error, refetch } = useWellness(days);
+
+  const wellnessPeriod = toWellnessPeriod(period);
 
   const trendData = useMemo(() => buildTrendData(wellness), [wellness]);
-
-  const visibleTrend = useMemo(() => {
-    if (period === "week")  return trendData.slice(-7);
-    if (period === "month") return trendData.slice(-90);
-    return trendData;
-  }, [trendData, period]);
+  const visibleTrend = trendData; // API already filtered by `days`
 
   const latestTrend = visibleTrend[visibleTrend.length - 1];
   const showDots    = visibleTrend.length <= 20;
@@ -234,24 +237,10 @@ export default function WellnessPage() {
 
   return (
     <>
-      <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-6 py-3 flex items-center justify-between">
+      <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-6 py-3 flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-sm font-semibold text-white">Wellness</h1>
-        <div className="flex items-center gap-3">
-          {/* Zeitraum-Tabs */}
-          <div className="flex items-center gap-1 bg-dash-card border border-dash-border rounded-xl p-1">
-            {PERIODS.map((p) => (
-              <button
-                key={p.key}
-                onClick={() => setPeriod(p.key)}
-                className={clsx(
-                  "text-[11px] px-3 py-1 rounded-lg transition-colors",
-                  period === p.key ? "bg-indigo-600 text-white" : "text-dash-muted hover:text-white"
-                )}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <PeriodSelector value={period} onChange={setPeriod} />
           <button
             onClick={refetch}
             disabled={loading}
@@ -318,7 +307,6 @@ export default function WellnessPage() {
                         v != null ? [`${v}%`, "Recovery Score"] : [null, null]
                       }
                     />
-                    {/* 70 % = gute Erholung */}
                     <ReferenceLine
                       y={70}
                       stroke="#10b981"
@@ -344,7 +332,7 @@ export default function WellnessPage() {
                 {/* HRV */}
                 <div className="rounded-2xl border border-dash-border bg-dash-card p-5">
                   <TrendHeader
-                    label="HRV"
+                    label={<GlossaryTooltip term="HRV">HRV</GlossaryTooltip>}
                     value={latestTrend?.hrv != null ? parseFloat(latestTrend.hrv.toFixed(1)) : null}
                     unit="ms"
                     color="#06b6d4"
@@ -407,7 +395,7 @@ export default function WellnessPage() {
                 {/* Ruhepuls */}
                 <div className="rounded-2xl border border-dash-border bg-dash-card p-5">
                   <TrendHeader
-                    label="Ruhepuls"
+                    label={<GlossaryTooltip term="RHR">Ruhepuls</GlossaryTooltip>}
                     value={latestTrend?.rhr}
                     unit="bpm"
                     color="#ef4444"
@@ -464,7 +452,7 @@ export default function WellnessPage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             {METRICS.map((m) => (
-              <MiniChart key={m.key as string} metric={m} wellness={wellness} period={period} />
+              <MiniChart key={m.key as string} metric={m} wellness={wellness} period={wellnessPeriod} />
             ))}
           </div>
         )}

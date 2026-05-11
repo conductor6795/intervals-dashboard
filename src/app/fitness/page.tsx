@@ -14,6 +14,9 @@ import { useWellness } from "@/hooks/useWellness";
 import { useActivities, useEvents } from "@/hooks/useActivities";
 import { buildProgression, findProjectedPeak } from "@/lib/progression";
 import { WellnessDay, Activity } from "@/lib/types";
+import { usePeriod } from "@/hooks/usePeriod";
+import PeriodSelector from "@/components/ui/PeriodSelector";
+import GlossaryTooltip from "@/components/ui/Tooltip";
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -21,7 +24,7 @@ function Skeleton({ className }: { className?: string }) {
   return <div className={clsx("animate-pulse rounded-2xl bg-dash-card border border-dash-border", className)} />;
 }
 
-function StatBadge({ label, value, color, sub }: { label: string; value: string; color: string; sub?: string }) {
+function StatBadge({ label, value, color, sub }: { label: React.ReactNode; value: string; color: string; sub?: string }) {
   return (
     <div className="bg-dash-card border border-dash-border rounded-2xl p-4">
       <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-2">{label}</p>
@@ -37,14 +40,6 @@ const TOOLTIP_STYLE = {
   borderRadius: 10,
   fontSize: 11,
 };
-
-const PERIODS = [
-  { label: "30 Tage", days: 30 },
-  { label: "60 Tage", days: 60 },
-  { label: "90 Tage", days: 90 },
-  { label: "6 Monate", days: 180 },
-  { label: "1 Jahr", days: 365 },
-];
 
 // ── Strain + Hours weekly aggregation ────────────────────────────────────────
 
@@ -107,11 +102,11 @@ function buildStrainAndHoursData(
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function FitnessPage() {
-  const [period, setPeriod] = useState(90);
+  const { period, setPeriod, days } = usePeriod("3m");
   const [showProgression, setShowProgression] = useState(true);
 
-  const { data: wellness, loading: wLoading, error, refetch } = useWellness(period);
-  const { activities, loading: aLoading } = useActivities(period);
+  const { data: wellness, loading: wLoading, error, refetch } = useWellness(days);
+  const { activities, loading: aLoading } = useActivities(days);
   const { events } = useEvents();
 
   const loading = wLoading || aLoading;
@@ -186,20 +181,7 @@ export default function FitnessPage() {
       <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-6 py-3 flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-sm font-semibold text-white">Fitness-Trend</h1>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1 bg-dash-card border border-dash-border rounded-xl p-1">
-            {PERIODS.map((p) => (
-              <button
-                key={p.days}
-                onClick={() => setPeriod(p.days)}
-                className={clsx(
-                  "text-[11px] px-2.5 py-1 rounded-lg transition-colors",
-                  period === p.days ? "bg-indigo-600 text-white" : "text-dash-muted hover:text-white",
-                )}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
+          <PeriodSelector value={period} onChange={setPeriod} />
           <button
             onClick={refetch}
             disabled={loading}
@@ -228,17 +210,17 @@ export default function FitnessPage() {
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <StatBadge
-                label="CTL (Fitness)"
+                label={<GlossaryTooltip term="CTL">CTL (Fitness)</GlossaryTooltip>}
                 value={latestCTL != null ? latestCTL.toFixed(1) : "–"}
                 color="text-blue-400"
               />
               <StatBadge
-                label="ATL (Ermüdung)"
+                label={<GlossaryTooltip term="ATL">ATL (Ermüdung)</GlossaryTooltip>}
                 value={latestATL != null ? latestATL.toFixed(1) : "–"}
                 color="text-orange-400"
               />
               <StatBadge
-                label="TSB (Form)"
+                label={<GlossaryTooltip term="TSB">TSB (Form)</GlossaryTooltip>}
                 value={latestTSB != null ? latestTSB.toFixed(1) : "–"}
                 color={latestTSB != null && latestTSB >= 0 ? "text-emerald-400" : "text-orange-400"}
                 sub={latestTSB != null
@@ -263,7 +245,7 @@ export default function FitnessPage() {
         <section>
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium">
-              Performance Management Chart
+              <GlossaryTooltip term="PMC">Performance Management Chart</GlossaryTooltip>
             </p>
             {!loading && hasProjection && (
               <div className="flex items-center gap-3">
