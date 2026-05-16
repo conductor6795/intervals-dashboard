@@ -6,3 +6,8 @@ services:
     env_file:
       - .env.local
     restart: unless-stopped
+    volumes:
+      - habits_data:/app/data
+
+volumes:
+  habits_data:
