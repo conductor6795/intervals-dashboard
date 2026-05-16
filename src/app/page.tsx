@@ -100,7 +100,7 @@ export default function OverviewPage() {
 
   const { data: wellness, loading: wLoading, error: wError, refetch: refetchWellness } = useWellness(days);
   const { activities, loading: aLoading, refetch: refetchActivities } = useActivities(days);
-  const { events } = useEvents();
+  const { events, athleteId } = useEvents();
 
   const metrics = useMemo(() => calcAllMetrics(wellness), [wellness]);
   const trends  = useMemo(() => buildTrends(wellness), [wellness]);
@@ -110,6 +110,17 @@ export default function OverviewPage() {
   const latestCTL  = today?.ctl;
   const latestATL  = today?.atl;
   const latestTSB  = latestCTL != null && latestATL != null ? latestCTL - latestATL : null;
+
+  const weeklyHours = useMemo(() => {
+    if (aLoading || activities.length === 0) return null;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 7);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    const hours = activities
+      .filter((a) => a.start_date_local >= cutoffStr)
+      .reduce((sum, a) => sum + (a.moving_time ?? 0) / 3600, 0);
+    return hours > 0 ? hours : null;
+  }, [activities, aLoading]);
   const athleteName = process.env.NEXT_PUBLIC_ATHLETE_NAME ?? "Athlet";
 
   const isLoading = wLoading || aLoading;
@@ -151,7 +162,7 @@ export default function OverviewPage() {
           <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">Heutiges Training</p>
           {isLoading
             ? <Skeleton className="h-16" />
-            : <TodayWorkout events={events} activities={activities} />
+            : <TodayWorkout events={events} activities={activities} athleteId={athleteId} />
           }
         </section>
 
@@ -180,6 +191,10 @@ export default function OverviewPage() {
                 advice={metrics.cvZoneAdvice}
                 trendRatio={metrics.trendRatio}
                 cv={metrics.cv}
+                tsb={latestTSB}
+                readiness={metrics.trainingReadiness}
+                ctl={latestCTL ?? null}
+                weeklyHours={weeklyHours}
               />
             </div>
           )}

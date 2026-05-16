@@ -35,6 +35,7 @@ export function useActivities(days = 60) {
 
 export function useEvents() {
   const [events, setEvents] = useState<IntervalsEvent[]>([]);
+  const [athleteId, setAthleteId] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,8 +44,9 @@ export function useEvents() {
       try {
         const res = await fetch("/api/events");
         if (!res.ok) return;
-        const json: IntervalsEvent[] = await res.json();
-        setEvents(json);
+        const json = await res.json();
+        setEvents(json.events ?? json);
+        if (json.athleteId) setAthleteId(json.athleteId);
       } catch {
         setError("Events konnten nicht geladen werden");
       } finally {
@@ -53,7 +55,7 @@ export function useEvents() {
     })();
   }, []);
 
-  return { events, loading, error };
+  return { events, athleteId, loading, error };
 }
 
 function getDateDaysAgo(days: number) {

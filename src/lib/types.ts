@@ -85,6 +85,26 @@ export interface ProRace {
   country?: string;
 }
 
+export interface ZoneEntry {
+  id: number;
+  name: string;
+  min: number | null;
+  max: number | null;
+  fromPct?: number | null;
+  toPct?: number | null;
+  color?: string;
+}
+
+export interface AthleteProfile {
+  ftp: number | null;
+  lthr: number | null;
+  weight: number | null;
+  vo2max: number | null;
+  powerZones: ZoneEntry[];
+  hrZones: ZoneEntry[];
+  sportTypes: string[];
+}
+
 export type CVZone = "green" | "yellow" | "orange" | "red";
 
 export interface CalculatedMetrics {

@@ -1,222 +1,395 @@
 "use client";
-import { useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Zap, Heart, Activity } from "lucide-react";
+import { useState } from "react";
+import { RefreshCw, Zap, Activity, Heart, Scale } from "lucide-react";
 import { clsx } from "clsx";
-import { useAthlete } from "@/hooks/useAthlete";
+
+import { useAthleteProfile } from "@/hooks/useAthleteProfile";
 import { useWellness } from "@/hooks/useWellness";
-import { calcAllMetrics } from "@/lib/calculations";
-import { AthleteData } from "@/lib/types";
+import { ZoneEntry } from "@/lib/types";
+
+// ── Typen ─────────────────────────────────────────────────────────────────────
+
+type SportTab = "Ride" | "Run";
+
+// ── Hilfsfunktionen ───────────────────────────────────────────────────────────
+
+function tsbLabel(tsb: number | null): string {
+  if (tsb == null) return "–";
+  if (tsb > 5)   return "Frisch";
+  if (tsb < -10) return "Müde";
+  return "Ausgeglichen";
+}
+
+const ZONE_COLORS: Record<number, string> = {
+  1: "#22c55e",
+  2: "#3b82f6",
+  3: "#eab308",
+  4: "#f97316",
+  5: "#ef4444",
+  6: "#a855f7",
+};
+function zoneColor(id: number, fallback?: string): string {
+  return ZONE_COLORS[id] ?? fallback ?? "#94a3b8";
+}
+
+// ── Sub-Komponenten ───────────────────────────────────────────────────────────
 
 function Skeleton({ className }: { className?: string }) {
-  return <div className={clsx("animate-pulse rounded-2xl bg-dash-card border border-dash-border", className)} />;
+  return (
+    <div
+      className={clsx(
+        "animate-pulse rounded-2xl bg-dash-card border border-dash-border",
+        className,
+      )}
+    />
+  );
 }
 
-function StatCard({ label, value, unit, sub, color = "text-white", icon }: {
-  label: string; value: string | number | null; unit?: string;
-  sub?: string; color?: string; icon?: React.ReactNode;
+function MetricCard({
+  label,
+  value,
+  unit,
+  sub,
+  color,
+  icon: Icon,
+  loading,
+}: {
+  label: string;
+  value: string;
+  unit: string;
+  sub?: string;
+  color: string;
+  icon: React.ElementType;
+  loading?: boolean;
 }) {
+  if (loading) return <Skeleton className="h-[100px]" />;
   return (
-    <div className="bg-dash-card border border-dash-border rounded-2xl p-4 flex flex-col justify-between h-[110px]">
-      <div className="flex items-center gap-1.5 text-[10px] text-dash-muted uppercase tracking-wider font-medium">
-        {icon}{label}
+    <div className="bg-dash-card border border-dash-border rounded-2xl p-4 flex flex-col justify-between min-h-[100px]">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium">
+          {label}
+        </p>
+        <Icon size={14} className="text-dash-muted/50" />
       </div>
-      <div className="flex items-end gap-1.5">
-        <span className={clsx("text-2xl font-bold tabular-nums leading-none", color)}>{value ?? "–"}</span>
-        {unit && <span className="text-dash-muted text-xs pb-0.5">{unit}</span>}
-      </div>
-      <p className="text-[10px] text-dash-muted min-h-[14px]">{sub ?? ""}</p>
-    </div>
-  );
-}
-
-/** Extrahiert Werte aus dem Athleten-Objekt, unabhängig von Feldnamen */
-function extractAthleteValues(a: AthleteData | null) {
-  if (!a) return { ftp: null, lthr: null, maxHR: null, restingHR: null, vo2max: null, weight: null };
-  const num = (keys: string[]): number | null => {
-    for (const k of keys) {
-      const v = a[k];
-      if (typeof v === "number" && v > 0) return v;
-    }
-    return null;
-  };
-  return {
-    ftp:      num(["ftp", "threshold_power", "thresholdPower"]),
-    lthr:     num(["lt_hr", "lthr", "ltHr", "lt_heart_rate"]),
-    maxHR:    num(["max_hr", "maxHr", "max_heart_rate"]),
-    restingHR:num(["rest_hr", "resting_hr", "restingHr", "resting_heart_rate"]),
-    vo2max:   num(["vo2max", "vo2Max", "vo_2_max"]),
-    weight:   num(["weight"]),
-  };
-}
-
-/** Coggan Power Zones (7 Zonen) */
-function powerZones(ftp: number) {
-  return [
-    { zone: "Z1", name: "Aktive Erholung",        range: [0,           ftp * 0.55], color: "#64748b" },
-    { zone: "Z2", name: "Grundlagenausdauer",      range: [ftp * 0.55,  ftp * 0.75], color: "#22c55e" },
-    { zone: "Z3", name: "Tempo",                   range: [ftp * 0.75,  ftp * 0.90], color: "#84cc16" },
-    { zone: "Z4", name: "Schwelle (FTP)",           range: [ftp * 0.90,  ftp * 1.05], color: "#eab308" },
-    { zone: "Z5", name: "VO2max",                  range: [ftp * 1.05,  ftp * 1.20], color: "#f97316" },
-    { zone: "Z6", name: "Anaerobe Kapazität",      range: [ftp * 1.20,  ftp * 1.50], color: "#ef4444" },
-    { zone: "Z7", name: "Neuromuskulär",           range: [ftp * 1.50,  Infinity],   color: "#a855f7" },
-  ];
-}
-
-/** Coggan HR Zones */
-function hrZones(lthr: number) {
-  return [
-    { zone: "Z1",  name: "Aktive Erholung",  range: [0,          lthr * 0.81], color: "#64748b" },
-    { zone: "Z2",  name: "Aerob/GA",         range: [lthr * 0.81, lthr * 0.89], color: "#22c55e" },
-    { zone: "Z3",  name: "Tempo",            range: [lthr * 0.89, lthr * 0.93], color: "#84cc16" },
-    { zone: "Z4",  name: "Schwelle",         range: [lthr * 0.93, lthr * 1.00], color: "#eab308" },
-    { zone: "Z5a", name: "Aerob-Anaerob",    range: [lthr * 1.00, lthr * 1.03], color: "#f97316" },
-    { zone: "Z5b", name: "Anaerob",          range: [lthr * 1.03, lthr * 1.06], color: "#ef4444" },
-    { zone: "Z5c", name: "Max",              range: [lthr * 1.06, Infinity],    color: "#a855f7" },
-  ];
-}
-
-function ZoneRow({ zone, name, range, color, i }: { zone: string; name: string; range: [number,number]; color: string; i: number }) {
-  return (
-    <div className={clsx("flex items-center gap-4 px-5 py-3", i > 0 && "border-t border-dash-border")}>
-      <div className="w-8 h-8 rounded-xl flex items-center justify-center text-[10px] font-bold shrink-0"
-        style={{ backgroundColor: `${color}20`, color }}>
-        {zone}
-      </div>
-      <p className="text-xs font-medium text-white flex-1">{name}</p>
-      <p className="text-xs text-dash-muted tabular-nums shrink-0">
-        {range[1] === Infinity
-          ? `> ${Math.round(range[0])}`
-          : `${Math.round(range[0])} – ${Math.round(range[1])}`}
-      </p>
-      <div className="hidden sm:block w-20 h-1.5 rounded-full bg-dash-border overflow-hidden shrink-0">
-        <div className="h-full rounded-full" style={{ backgroundColor: color, width: "100%" }} />
+      <div>
+        <div className="flex items-end gap-1">
+          <span className={clsx("text-2xl font-bold tabular-nums leading-none", color)}>
+            {value}
+          </span>
+          {value !== "–" && (
+            <span className="text-dash-muted text-xs pb-0.5">{unit}</span>
+          )}
+        </div>
+        {sub && (
+          <p className="text-[10px] text-dash-muted/60 mt-0.5">{sub}</p>
+        )}
       </div>
     </div>
   );
 }
 
-export default function PerformancePage() {
-  const { data: rawAthlete, loading: aLoading, error: aError } = useAthlete();
-  const { data: wellness, loading: wLoading } = useWellness(14);
-  const metrics = useMemo(() => calcAllMetrics(wellness), [wellness]);
-  const today = wellness[wellness.length - 1];
-  const [showDebug, setShowDebug] = useState(false);
+function ZoneTable({
+  title,
+  zones,
+  unit,
+  anchor,
+  loading,
+}: {
+  title: string;
+  zones: ZoneEntry[];
+  unit: string;
+  anchor?: number | null;  // FTP für Watt-Zonen, LTHR für HF-Zonen
+  loading: boolean;
+}) {
+  if (loading) return <Skeleton className="h-[220px]" />;
+  if (zones.length === 0) return null;
 
-  const loading = aLoading || wLoading;
-  const athlete = rawAthlete as AthleteData | null;
-  const { ftp, lthr, maxHR, restingHR, vo2max, weight } = extractAthleteValues(athlete);
+  return (
+    <div className="bg-dash-card border border-dash-border rounded-2xl overflow-hidden">
+      <div className="px-5 py-3 border-b border-dash-border">
+        <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium">
+          {title}
+        </p>
+      </div>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-dash-border">
+            <th className="text-left px-5 py-2 text-dash-muted font-medium w-16">Zone</th>
+            <th className="text-left px-5 py-2 text-dash-muted font-medium">Bereich</th>
+            <th className="text-right px-5 py-2 text-dash-muted font-medium">{unit}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {zones.map((z) => {
+            const color = z.color ?? zoneColor(z.id);
 
-  const estimatedVO2max = !vo2max && ftp && weight
-    ? parseFloat(((ftp / weight) * 10.8 + 7).toFixed(1))
-    : null;
-  const displayVO2max = vo2max ?? estimatedVO2max;
-  const vo2maxIsEstimated = !vo2max && estimatedVO2max != null;
+            const rangeStr =
+              z.min != null && z.max != null
+                ? `${z.min} – ${z.max}`
+                : z.min != null
+                ? `> ${z.min}`
+                : "–";
 
-  const hasAnyData = ftp || lthr || maxHR || vo2max;
+            // Prozentwerte: aus Zone-Daten ODER direkt aus bpm÷anchor berechnen
+            const fromPct =
+              z.fromPct != null
+                ? z.fromPct
+                : anchor && z.min != null
+                ? Math.round((z.min / anchor) * 100)
+                : null;
+            const toPct =
+              z.toPct != null
+                ? z.toPct
+                : anchor && z.max != null
+                ? Math.round((z.max / anchor) * 100)
+                : null;
+
+            const pctStr =
+              fromPct != null && toPct != null
+                ? `${fromPct}–${toPct}%`
+                : fromPct != null
+                ? `> ${fromPct}%`
+                : "–";
+
+            return (
+              <tr
+                key={z.id}
+                className="border-b border-dash-border/50 last:border-0 hover:bg-white/[0.02] transition-colors"
+              >
+                <td className="px-5 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <div
+                      className="w-1 h-4 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: color }}
+                    />
+                    <span className="font-medium text-white">{z.name}</span>
+                  </div>
+                </td>
+                <td className="px-5 py-2.5 text-dash-muted">{pctStr}</td>
+                <td className="px-5 py-2.5 text-right font-mono text-white/80">
+                  {rangeStr}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Seite ─────────────────────────────────────────────────────────────────────
+
+export default function LeistungPage() {
+  const [sport, setSport] = useState<SportTab>("Ride");
+
+  const {
+    ftp, lthr, weight, vo2max,
+    powerZones, hrZones,
+    loading: profileLoading,
+    error: profileError,
+    refetch,
+  } = useAthleteProfile(sport);
+
+  // Wellness für CTL / TSB — 14 Tage damit sicher ein befüllter Eintrag dabei ist
+  const { data: wellness, loading: wellnessLoading } = useWellness(14);
+  const latestWellness = [...wellness]
+    .reverse()
+    .find((d) => d.ctl != null);
+
+  const ctl = latestWellness?.ctl ?? null;
+
+  // TSB = `form` in intervals.icu (= CTL − ATL)
+  // Fallback: manuell aus CTL und ATL berechnen falls `form` fehlt
+  const wellnessAny = latestWellness as (typeof latestWellness & Record<string, unknown>) | undefined;
+  const tsbFromField =
+    wellnessAny?.form ??
+    (wellnessAny?.["icu_form"] as number | undefined) ??
+    null;
+  const tsbComputed =
+    latestWellness?.ctl != null && latestWellness?.atl != null
+      ? parseFloat((latestWellness.ctl - latestWellness.atl).toFixed(1))
+      : null;
+  const tsb: number | null =
+    tsbFromField !== null && tsbFromField !== undefined
+      ? Number(tsbFromField)
+      : tsbComputed;
+
+  // Gewicht: aus Athletenprofil (API route) ODER letzter Wellness-Eintrag als Fallback
+  const profileWeight = weight;
+  const wellnessWeight = [...wellness]
+    .reverse()
+    .find((d) => d.weight != null)?.weight ?? null;
+  const displayWeight = profileWeight ?? wellnessWeight;
+
+  const noParams = !profileLoading && ftp == null && lthr == null;
+  const loading  = profileLoading || wellnessLoading;
 
   return (
     <>
-      <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-6 py-3 flex items-center justify-between">
-        <h1 className="text-sm font-semibold text-white">Leistungsdaten</h1>
-        {aError && <span className="text-xs text-red-400">{aError}</span>}
+      {/* ── Header ── */}
+      <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-6 py-3 flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-sm font-semibold text-white">Leistungsdaten</h1>
+          <p className="text-[10px] text-dash-muted">
+            FTP, Zonen und aktuelle Trainingsform
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {/* Sport-Switcher */}
+          <div className="flex rounded-xl border border-dash-border overflow-hidden text-xs">
+            {(["Ride", "Run"] as SportTab[]).map((s) => (
+              <button
+                key={s}
+                onClick={() => setSport(s)}
+                className={clsx(
+                  "px-3 py-1.5 transition-colors",
+                  sport === s
+                    ? "bg-white/10 text-white"
+                    : "text-dash-muted hover:text-white",
+                )}
+              >
+                {s === "Ride" ? "Rad" : "Lauf"}
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={refetch}
+            disabled={loading}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-white/30 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
       </header>
 
-      <div className="p-6 space-y-6 max-w-[1200px]">
+      {/* ── Fehler-Banner ── */}
+      {profileError && (
+        <div className="mx-6 mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-400">
+          {profileError}
+        </div>
+      )}
 
-        {/* Kern-Leistungswerte */}
+      {/* ── Kein-Parameter-Hinweis ── */}
+      {noParams && (
+        <div className="mx-6 mt-4 p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-xs text-yellow-400">
+          <span className="font-semibold">Keine Leistungsparameter gefunden</span>
+          <span className="text-yellow-400/70 ml-1">
+            — Setze FTP und LTHR in intervals.icu → Einstellungen → Athletenprofil.
+            VO2max wird von Garmin/Wahoo synchronisiert.
+          </span>
+        </div>
+      )}
+
+      <div className="p-6 max-w-[900px] space-y-6">
+
+        {/* ── LEISTUNGSPARAMETER ── */}
         <section>
-          <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-4">Leistungsparameter</p>
-          {loading ? (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[0,1,2,3].map(i => <Skeleton key={i} className="h-28" />)}
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <StatCard label="FTP" value={ftp} unit="W" icon={<Zap size={10} />} color="text-yellow-400"
-                sub={ftp && weight ? `${(ftp / weight).toFixed(2)} W/kg` : ""} />
-              <StatCard label={vo2maxIsEstimated ? "VO2max *" : "VO2max"} value={displayVO2max?.toFixed(1) ?? null}
-                unit="mL/min/kg" icon={<Activity size={10} />} color="text-blue-400"
-                sub={vo2maxIsEstimated ? "* Schätzung aus FTP" : "Gerät-Messung"} />
-              <StatCard label="LTHR" value={lthr} unit="bpm" icon={<Heart size={10} />} color="text-red-400"
-                sub={maxHR ? `Max HR: ${maxHR} bpm` : ""} />
-              <StatCard label="Gewicht" value={weight?.toFixed(1) ?? null} unit="kg" color="text-purple-400"
-                sub={ftp && weight ? `W/kg: ${(ftp / weight).toFixed(2)}` : ""} />
-            </div>
-          )}
+          <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">
+            Leistungsparameter
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <MetricCard
+              label="FTP"
+              value={ftp != null ? String(ftp) : "–"}
+              unit="W"
+              color="text-yellow-400"
+              icon={Zap}
+              loading={profileLoading}
+            />
+            <MetricCard
+              label="VO2MAX"
+              value={vo2max != null ? vo2max.toFixed(1) : "–"}
+              unit="ml/min/kg"
+              sub="Gerät-Messung"
+              color="text-cyan-400"
+              icon={Activity}
+              loading={profileLoading}
+            />
+            <MetricCard
+              label="LTHR"
+              value={lthr != null ? String(lthr) : "–"}
+              unit="bpm"
+              color="text-red-400"
+              icon={Heart}
+              loading={profileLoading}
+            />
+            <MetricCard
+              label="Gewicht"
+              value={displayWeight != null ? Number(displayWeight).toFixed(1) : "–"}
+              unit="kg"
+              color="text-purple-400"
+              icon={Scale}
+              loading={profileLoading}
+            />
+          </div>
         </section>
 
-        {/* Aktuelle Form */}
+        {/* ── AKTUELLE FORM ── */}
         <section>
-          <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-4">Aktuelle Form</p>
-          {loading ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {[0,1,2].map(i => <Skeleton key={i} className="h-28" />)}
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <StatCard label="CTL (Fitness)" value={today?.ctl?.toFixed(1) ?? null} color="text-blue-400"
-                sub="42-Tage-EMA" />
-              <StatCard
-                label="TSB (Form)"
-                value={today?.ctl != null && today?.atl != null ? (today.ctl - today.atl).toFixed(1) : null}
-                color={(today?.ctl ?? 0) - (today?.atl ?? 0) >= 0 ? "text-emerald-400" : "text-orange-400"}
-                sub={(today?.ctl ?? 0) - (today?.atl ?? 0) >= 5 ? "Frisch" : (today?.ctl ?? 0) - (today?.atl ?? 0) >= 0 ? "Neutral" : "Ermüdet"}
-              />
-              <StatCard label="Trainingsbereitschaft" value={metrics.trainingReadiness} unit="/100"
-                color={metrics.trainingReadiness >= 75 ? "text-emerald-400" : metrics.trainingReadiness >= 50 ? "text-yellow-400" : "text-red-400"} />
-            </div>
-          )}
+          <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">
+            Aktuelle Form
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <MetricCard
+              label="CTL (Fitness)"
+              value={ctl != null ? ctl.toFixed(1) : "–"}
+              unit=""
+              sub="42-Tage-EMA"
+              color="text-blue-400"
+              icon={Activity}
+              loading={wellnessLoading}
+            />
+            <MetricCard
+              label="TSB (Form)"
+              value={tsb != null ? tsb.toFixed(1) : "–"}
+              unit=""
+              sub={tsb != null ? tsbLabel(tsb) : undefined}
+              color={
+                tsb == null      ? "text-dash-muted"
+                  : tsb > 5     ? "text-green-400"
+                  : tsb < -10   ? "text-orange-400"
+                  : "text-yellow-400"
+              }
+              icon={Activity}
+              loading={wellnessLoading}
+            />
+          </div>
         </section>
 
-        {/* Power Zones */}
-        {!loading && ftp != null && (
+        {/* ── WATTZONEN ── */}
+        {(profileLoading || powerZones.length > 0) && (
           <section>
-            <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-4">Wattzonen – FTP: {ftp} W</p>
-            <div className="bg-dash-card border border-dash-border rounded-2xl overflow-hidden">
-              {powerZones(ftp).map((z, i) => (
-                <ZoneRow key={z.zone} zone={z.zone} name={z.name}
-                  range={z.range as [number,number]} color={z.color} i={i} />
-              ))}
-            </div>
+            <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">
+              Wattzonen
+            </p>
+            <ZoneTable
+              title={`Leistungszonen · ${sport === "Ride" ? "Rad" : "Lauf"}`}
+              zones={powerZones}
+              unit="Watt"
+              anchor={ftp}
+              loading={profileLoading}
+            />
           </section>
         )}
 
-        {/* HR Zones */}
-        {!loading && lthr != null && (
+        {/* ── HF-ZONEN ── */}
+        {(profileLoading || hrZones.length > 0) && (
           <section>
-            <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-4">HF-Zonen – LTHR: {lthr} bpm</p>
-            <div className="bg-dash-card border border-dash-border rounded-2xl overflow-hidden">
-              {hrZones(lthr).map((z, i) => (
-                <ZoneRow key={z.zone} zone={z.zone} name={z.name}
-                  range={z.range as [number,number]} color={z.color} i={i} />
-              ))}
-            </div>
+            <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">
+              Herzfrequenzzonen
+            </p>
+            <ZoneTable
+              title={`HF-Zonen · ${sport === "Ride" ? "Rad" : "Lauf"}`}
+              zones={hrZones}
+              unit="bpm"
+              anchor={lthr}
+              loading={profileLoading}
+            />
           </section>
         )}
 
-        {/* Hinweis + Debug */}
-        {!loading && (
-          <section>
-            {!hasAnyData && (
-              <div className="p-4 rounded-2xl border border-yellow-500/30 bg-yellow-500/5 text-xs text-dash-muted mb-4">
-                <p className="text-yellow-400 font-medium mb-1">Keine Leistungsparameter gefunden</p>
-                <p>Setze FTP und LTHR in intervals.icu → Einstellungen → Athletenprofil. VO2max wird von Garmin/Wahoo synchronisiert.</p>
-              </div>
-            )}
-            {rawAthlete && (
-              <button onClick={() => setShowDebug(v => !v)}
-                className="flex items-center gap-2 text-[11px] text-dash-muted hover:text-white transition-colors">
-                {showDebug ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                API-Rohdaten anzeigen (Debug)
-              </button>
-            )}
-            {showDebug && rawAthlete && (
-              <pre className="mt-3 p-4 rounded-2xl bg-dash-card border border-dash-border text-[10px] text-dash-muted overflow-auto max-h-64">
-                {JSON.stringify(rawAthlete, null, 2)}
-              </pre>
-            )}
-          </section>
-        )}
       </div>
     </>
   );

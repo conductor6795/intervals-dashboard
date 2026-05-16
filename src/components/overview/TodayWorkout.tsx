@@ -5,6 +5,7 @@ import { IntervalsEvent, Activity } from "@/lib/types";
 interface Props {
   events: IntervalsEvent[];
   activities: Activity[];
+  athleteId?: string;
 }
 
 const SPORT_ICONS: Record<string, string> = {
@@ -20,9 +21,8 @@ function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
 
-export default function TodayWorkout({ events, activities }: Props) {
+export default function TodayWorkout({ events, activities, athleteId = "" }: Props) {
   const today = todayStr();
-  const athleteId = process.env.NEXT_PUBLIC_ATHLETE_ID ?? "";
 
   const todayActivities = activities.filter(
     (a) => a.start_date_local?.slice(0, 10) === today
@@ -32,7 +32,6 @@ export default function TodayWorkout({ events, activities }: Props) {
   );
 
   // Dedup: für jeden Event-Typ zählen wir, wie viele Activities bereits absolviert wurden.
-  // Events, die durch eine gleichartige Activity abgedeckt sind, werden ausgeblendet.
   const completedCountByType: Record<string, number> = {};
   todayActivities.forEach((a) => {
     const t = (a.type ?? "").toLowerCase();
@@ -68,14 +67,11 @@ export default function TodayWorkout({ events, activities }: Props) {
   return (
     <div className="flex flex-col gap-2">
       {todayActivities.map((activity) => {
-        const actLink = athleteId
+        const href = athleteId
           ? `https://intervals.icu/activities/${activity.id}`
           : null;
-        return (
-          <div
-            key={activity.id}
-            className="flex items-center gap-4 p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/5"
-          >
+        const inner = (
+          <div className="relative flex items-center gap-4 p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 hover:bg-white/5 transition-colors">
             <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center text-lg shrink-0">
               {sportIcon(activity.type)}
             </div>
@@ -99,30 +95,27 @@ export default function TodayWorkout({ events, activities }: Props) {
                 )}
               </div>
             </div>
-            {actLink && (
-              <a
-                href={actLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="shrink-0 flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 hover:border-emerald-400/50 rounded-lg px-3 py-1.5 transition-colors"
-              >
-                Intervals
-                <ExternalLink size={11} />
-              </a>
+            {href && (
+              <ExternalLink size={16} className="shrink-0 text-dash-muted" />
             )}
           </div>
+        );
+
+        return href ? (
+          <a key={activity.id} href={href} target="_blank" rel="noopener noreferrer">
+            {inner}
+          </a>
+        ) : (
+          <div key={activity.id}>{inner}</div>
         );
       })}
 
       {remainingEvents.map((event) => {
-        const calLink = athleteId
-          ? `https://intervals.icu/athletes/${athleteId}/calendar`
+        const href = athleteId
+          ? `https://intervals.icu/athlete/${athleteId}/calendar/${today}`
           : null;
-        return (
-          <div
-            key={event.id}
-            className="flex items-center gap-4 p-4 rounded-2xl border border-indigo-500/30 bg-indigo-500/5"
-          >
+        const inner = (
+          <div className="relative flex items-center gap-4 p-4 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 hover:bg-white/5 transition-colors">
             <div className="w-10 h-10 rounded-xl bg-indigo-500/20 flex items-center justify-center text-lg shrink-0">
               {event.type && SPORT_ICONS[event.type]
                 ? <span>{SPORT_ICONS[event.type]}</span>
@@ -140,18 +133,18 @@ export default function TodayWorkout({ events, activities }: Props) {
                 )}
               </div>
             </div>
-            {calLink && (
-              <a
-                href={calLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="shrink-0 flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 border border-indigo-500/30 hover:border-indigo-400/50 rounded-lg px-3 py-1.5 transition-colors"
-              >
-                Intervals
-                <ExternalLink size={11} />
-              </a>
+            {href && (
+              <ExternalLink size={16} className="shrink-0 text-dash-muted" />
             )}
           </div>
+        );
+
+        return href ? (
+          <a key={event.id} href={href} target="_blank" rel="noopener noreferrer">
+            {inner}
+          </a>
+        ) : (
+          <div key={event.id}>{inner}</div>
         );
       })}
     </div>

@@ -185,17 +185,10 @@ export default function TrainingPage() {
     const gymActs = activities.filter(
       (a) => a.type === "WeightTraining" || a.type === "Workout",
     );
-    const mobilityActs = activities.filter(
-      (a) =>
-        a.type === "Yoga" ||
-        a.type.toLowerCase().includes("mobility") ||
-        a.type.toLowerCase().includes("stretch"),
-    );
     return {
-      bike:     aggregateByWeek(bikeActs),
-      run:      aggregateByWeek(runActs),
-      gym:      aggregateByWeek(gymActs),
-      mobility: aggregateByWeek(mobilityActs),
+      bike: aggregateByWeek(bikeActs),
+      run:  aggregateByWeek(runActs),
+      gym:  aggregateByWeek(gymActs),
     };
   }, [activities, showCommutes]);
 
@@ -227,13 +220,13 @@ export default function TrainingPage() {
         {loading ? (
           <>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-56" />)}
+              {[0, 1, 2].map((i) => <Skeleton key={i} className="h-56" />)}
             </div>
             <Skeleton className="h-56" />
           </>
         ) : (
           <>
-            {/* 2×2 Grid: Rennrad · Laufen · Gym · Mobility */}
+            {/* Grid: Rennrad · Laufen · Gym */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <SportChart
                 label="Rennrad"
@@ -253,12 +246,6 @@ export default function TrainingPage() {
                 data={gridData.gym}
                 barColor="#14b8a6"
                 lineColor="#5eead4"
-              />
-              <SportChart
-                label="Mobility"
-                data={gridData.mobility}
-                barColor="#a855f7"
-                lineColor="#d8b4fe"
               />
             </div>
 

@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: `intervals.icu: ${res.status} ${text}` }, { status: res.status });
     }
     const data = await res.json();
-    return NextResponse.json(data);
+    return NextResponse.json({ events: data, athleteId });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
