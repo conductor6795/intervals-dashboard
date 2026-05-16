@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, Pencil,
-  RefreshCw, Download, Bell, CheckSquare, ChevronUp, ChevronDown,
+  RefreshCw, Download, Bell, CheckSquare, ChevronUp, ChevronDown, MapPin,
 } from "lucide-react";
 import { clsx } from "clsx";
 import {
@@ -24,8 +24,9 @@ interface Habit {
 interface DayData { checked: string[]; numeric: Record<string, number>; mood: number | null; }
 type History = Record<string, DayData>;
 interface HabitSettings {
-  ivAthleteId: string; ivApiKey: string; notifEnabled: boolean;
-  notifTime: string; autoSync: boolean; lastSync: string | null;
+  ivAthleteId: string; ivApiKey: string;
+  notifEnabled: boolean; notifTime: string; autoSync: boolean; lastSync: string | null;
+  latitude: number | null; longitude: number | null; locationName: string;
 }
 
 const DEFAULTS: Habit[] = [
@@ -50,6 +51,39 @@ const TOOLTIP_STYLE = { backgroundColor:"#131929", border:"1px solid #1e2d4a", b
 const MOOD_COLORS   = ["transparent","#ef4444","#f59e0b","#94a3b8","#3b82f6","#10b981"];
 const GRID_COL      = { display:"grid", gridTemplateColumns:"repeat(7, 16px)", gap:"3px" } as const;
 const VESSEL_SIZES  = [0.2, 0.3, 0.7]; // Liter
+
+/* ── Schweißraten nach Sportart (L/h) — basierend auf ACSM / Gatorade Sports Science Institute ── */
+const SWEAT_RATES: Record<string, number> = {
+  Run: 1.0, VirtualRun: 0.9, TrailRun: 1.1,
+  Ride: 0.8, VirtualRide: 0.95, MountainBikeRide: 0.9, GravelRide: 0.85,
+  Swim: 0.35,
+  Walk: 0.45, Hike: 0.55,
+  WeightTraining: 0.6, Workout: 0.65, Crossfit: 0.8,
+  Soccer: 1.0, Basketball: 0.9, Tennis: 0.75,
+  Rowing: 0.85, Kayaking: 0.55,
+};
+
+function getSweatRateL(type: string, loadPerHour: number): number {
+  const base = SWEAT_RATES[type] ?? 0.7;
+  // Intensitätsfaktor aus load/Stunde (TSS-äquivalent)
+  // Leicht <30, Moderat 30–70, Hart 70–120, Sehr hart >120
+  let factor = 1.0;
+  if      (loadPerHour < 30)  factor = 0.70;
+  else if (loadPerHour < 70)  factor = 1.00;
+  else if (loadPerHour < 120) factor = 1.20;
+  else                        factor = 1.40;
+  return base * factor;
+}
+
+/* ── Temperaturzuschlag (L/Tag) — basierend auf Sportwissenschaft / Thermoregulationsforschung ── */
+function getTempExtra(tempC: number): number {
+  if (tempC < 15) return 0;
+  if (tempC < 20) return 0.1;
+  if (tempC < 25) return 0.3;
+  if (tempC < 30) return 0.6;
+  if (tempC < 35) return 0.9;
+  return 1.2;
+}
 
 function toDS(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
@@ -142,8 +176,12 @@ function HabitGrid({ habit, history, today, onToggle }: {
 export default function HabitsPage() {
   const [habits,         setHabits]         = useState<Habit[]>([]);
   const [history,        setHistory]        = useState<History>({});
-  const [settings,       setSettings]       = useState<HabitSettings>({ ivAthleteId:"", ivApiKey:"", notifEnabled:false, notifTime:"22:00", autoSync:false, lastSync:null });
+  const [settings,       setSettings]       = useState<HabitSettings>({
+    ivAthleteId:"", ivApiKey:"", notifEnabled:false, notifTime:"22:00",
+    autoSync:false, lastSync:null, latitude:null, longitude:null, locationName:"",
+  });
   const [dynamicTargets, setDynamicTargets] = useState<Record<string, number>>({});
+  const [dynamicInfo,    setDynamicInfo]    = useState<Record<string, string>>({});
   const [tab,            setTab]            = useState<Tab>("today");
   const [statsSub,       setStatsSub]       = useState<"stats"|"corr">("stats");
   const [statsPeriod,    setStatsPeriod]    = useState<Period>("4w");
@@ -183,27 +221,90 @@ export default function HabitsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[settings.notifEnabled,settings.notifTime,settings.autoSync,loaded]);
 
-  /* ── Dynamisches Hydrationsziel von intervals.icu Aktivitäten ── */
+  /* ════════════════════════════════════════════════════
+     Wissenschaftsbasiertes dynamisches Hydrationsziel
+     Quellen: ACSM, Gatorade Sports Science Institute,
+     NCBI (Thermoregulationsforschung)
+  ════════════════════════════════════════════════════ */
   useEffect(()=>{
     if(!settings.ivAthleteId||!settings.ivApiKey||!loaded)return;
     const waterHabits=habits.filter(h=>h.habitType==="numeric"&&["l","liter"].includes(h.unit.toLowerCase()));
     if(!waterHabits.length)return;
-    fetch(`https://intervals.icu/api/v1/athlete/${settings.ivAthleteId}/activities?oldest=${selDate}&newest=${selDate}`,
-      {headers:{Authorization:"Basic "+btoa(`API_KEY:${settings.ivApiKey}`)}})
-      .then(r=>r.ok?r.json():[])
-      .then((acts:Array<{moving_time?:number}>)=>{
-        const totalHours=acts.reduce((s,a)=>s+(a.moving_time||0)/3600,0);
-        const extraL=Math.round(totalHours*5)/10; // +0,5L pro Trainingsstunde
-        if(extraL>0){
-          const dt:Record<string,number>={};
-          waterHabits.forEach(h=>{dt[h.id]=Math.round((h.numTarget+extraL)*10)/10;});
-          setDynamicTargets(dt);
-        }else{
-          setDynamicTargets({});
+
+    const run=async()=>{
+      // 1. Aktivitäten des Tages von intervals.icu holen
+      interface IvActivity { type?: string; sport_type?: string; moving_time?: number; icu_training_load?: number; training_load_score?: number; }
+      let acts: IvActivity[] = [];
+      try{
+        const r=await fetch(
+          `https://intervals.icu/api/v1/athlete/${settings.ivAthleteId}/activities?oldest=${selDate}&newest=${selDate}`,
+          {headers:{Authorization:"Basic "+btoa(`API_KEY:${settings.ivApiKey}`)}}
+        );
+        if(r.ok) acts=await r.json();
+      }catch{}
+
+      // 2. Aktuelle Temperatur holen (Open-Meteo, kostenlos, kein API-Key)
+      let tempC = 18; // Fallback: typisches Mitteleuropa-Wetter
+      let tempSource = "Schätzwert";
+      if(settings.latitude!==null && settings.longitude!==null){
+        try{
+          const wr=await fetch(
+            `https://api.open-meteo.com/v1/forecast?latitude=${settings.latitude}&longitude=${settings.longitude}&current=temperature_2m&timezone=auto`
+          );
+          if(wr.ok){
+            const wd=await wr.json();
+            if(wd.current?.temperature_2m!==undefined){
+              tempC=wd.current.temperature_2m;
+              tempSource=`${tempC.toFixed(1)}°C`;
+            }
+          }
+        }catch{}
+      }
+
+      const tempExtra=getTempExtra(tempC);
+
+      // 3. Aktivitätszuschlag berechnen
+      const newTargets: Record<string,number>={};
+      const newInfo: Record<string,string>={};
+
+      for(const h of waterHabits){
+        let actExtra=0;
+        const actParts: string[]=[];
+
+        for(const act of acts){
+          const sport=act.sport_type||act.type||"Workout";
+          const movingH=(act.moving_time||0)/3600;
+          const load=act.icu_training_load||act.training_load_score||0;
+          const loadPerH=movingH>0?load/movingH:50;
+          const rate=getSweatRateL(sport,loadPerH);
+          const extra=Math.round(rate*movingH*10)/10;
+          actExtra+=extra;
+          if(extra>0){
+            const minStr=Math.round(movingH*60);
+            actParts.push(`${sport} ${minStr}min (+${extra.toFixed(1)}L, ${rate.toFixed(1)}L/h)`);
+          }
         }
-      })
-      .catch(()=>{});
-  },[selDate,settings.ivAthleteId,settings.ivApiKey,habits,loaded]);
+
+        const totalExtra=Math.round((actExtra+tempExtra)*10)/10;
+        if(totalExtra>0){
+          const newTarget=Math.round((h.numTarget+totalExtra)*10)/10;
+          newTargets[h.id]=newTarget;
+
+          const parts: string[]=[];
+          parts.push(`Basis: ${h.numTarget} L`);
+          actParts.forEach(p=>parts.push(`Training: ${p}`));
+          if(tempExtra>0) parts.push(`Temperatur (${tempSource}): +${tempExtra.toFixed(1)} L`);
+          parts.push(`→ Gesamt: ${newTarget} L`);
+          newInfo[h.id]=parts.join(" · ");
+        }
+      }
+
+      setDynamicTargets(newTargets);
+      setDynamicInfo(newInfo);
+    };
+
+    run();
+  },[selDate,settings.ivAthleteId,settings.ivApiKey,settings.latitude,settings.longitude,habits,loaded]);
 
   const today     = todayStr();
   const isToday   = selDate===today;
@@ -292,6 +393,13 @@ export default function HabitsPage() {
   const exportJSON=()=>dl(`habits-${today}.json`,JSON.stringify({habits,history},null,2),"application/json");
   function dl(name:string,content:string,type:string){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([content],{type}));a.download=name;a.click();}
 
+  const getLocation=()=>{
+    if(!navigator.geolocation)return;
+    navigator.geolocation.getCurrentPosition(pos=>{
+      setSettings(s=>({...s,latitude:Math.round(pos.coords.latitude*1000)/1000,longitude:Math.round(pos.coords.longitude*1000)/1000}));
+    });
+  };
+
   if(!loaded)return<div className="p-6 text-dash-muted text-sm animate-pulse">Lade Habits…</div>;
 
   return(
@@ -353,6 +461,7 @@ export default function HabitsPage() {
               const isLUnit=["l","liter"].includes(hb.unit.toLowerCase());
               const effectiveTarget=dynamicTargets[hb.id]??hb.numTarget;
               const isDynamic=!!dynamicTargets[hb.id];
+              const infoText=dynamicInfo[hb.id]??"";
 
               return(
                 <div key={hb.id}
@@ -372,10 +481,8 @@ export default function HabitsPage() {
                     <p className="text-[11px] text-dash-muted">{badge(hb)}</p>
                   </div>
 
-                  {/* ── Numerisches Habit: Eingabe + Gefäß-Buttons ── */}
                   {hb.habitType==="numeric"&&(
                     <div className="flex flex-col items-end gap-1.5 flex-shrink-0" onClick={e=>e.stopPropagation()}>
-                      {/* Haupteingabe */}
                       <div className="flex items-center gap-1.5">
                         <button onClick={()=>setNum(hb.id,Math.max(0,Math.round(((numVal??0)*10-5))/10))} className="w-7 h-7 rounded-lg border border-dash-border text-dash-muted hover:text-white text-base flex items-center justify-center transition-colors">−</button>
                         <input type="number" step="0.5" min="0" value={numVal??""} placeholder="0"
@@ -386,11 +493,17 @@ export default function HabitsPage() {
                         <span className="text-[11px] text-dash-muted whitespace-nowrap">
                           /{effectiveTarget} {hb.unit}
                           {isDynamic&&(
-                            <span className="ml-1 text-indigo-300 cursor-help" title={`Ziel um +${Math.round((effectiveTarget-hb.numTarget)*1000)}ml erhöht (heutige Aktivität)`}>⚡</span>
+                            <span className="ml-1 text-indigo-300 cursor-help relative group/tip" title={infoText}>
+                              ⚡
+                              {/* Tooltip */}
+                              <span className="absolute right-0 bottom-5 z-10 hidden group-hover/tip:block w-64 bg-[#131929] border border-dash-border rounded-xl p-2 text-[10px] text-dash-muted leading-relaxed shadow-xl">
+                                {infoText.split(" · ").map((part,i)=><span key={i} className="block">{part}</span>)}
+                              </span>
+                            </span>
                           )}
                         </span>
                       </div>
-                      {/* Gefäß-Schnellbuttons — nur für L-Habits */}
+                      {/* Gefäß-Schnellbuttons */}
                       {isLUnit&&(
                         <div className="flex gap-1">
                           {VESSEL_SIZES.map(amt=>(
@@ -593,9 +706,12 @@ export default function HabitsPage() {
           <>
             <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
               <p className="text-sm font-semibold text-white">intervals.icu Wellness-Sync</p>
-              <p className="text-xs text-dash-muted leading-relaxed">Habits werden als <strong className="text-white">Tags + Kommentar</strong> eingetragen — Readiness wird <em>nicht</em> überschrieben. Mood → <code className="text-indigo-300 text-[10px]">motivation</code>. Mit hinterlegtem API-Key wird das Wasserziel automatisch an die Trainingsbelastung des Tages angepasst (+0,5 L/Std.).</p>
+              <p className="text-xs text-dash-muted leading-relaxed">
+                Habits werden als <strong className="text-white">Tags + Kommentar</strong> eingetragen. Mood → <code className="text-indigo-300 text-[10px]">motivation</code>.
+                Mit API-Key wird das Wasserziel täglich neu berechnet: sportartspezifische Schweißrate (0,35–1,4 L/h je nach Sportart + Intensität) + Temperaturzuschlag (Open-Meteo).
+              </p>
               <div><label className="text-[11px] text-dash-muted block mb-1">Athleten-ID</label><input type="text" value={settings.ivAthleteId} onChange={e=>setSettings(s=>({...s,ivAthleteId:e.target.value}))} placeholder="i12345" className="w-40 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
-              <div><label className="text-[11px] text-dash-muted block mb-1">API-Key <span className="text-dash-muted/50">(intervals.icu → Einstellungen → API)</span></label><input type="password" value={settings.ivApiKey} onChange={e=>setSettings(s=>({...s,ivApiKey:e.target.value}))} placeholder="••••••••" className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
+              <div><label className="text-[11px] text-dash-muted block mb-1">API-Key</label><input type="password" value={settings.ivApiKey} onChange={e=>setSettings(s=>({...s,ivApiKey:e.target.value}))} placeholder="••••••••" className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
               <div className="flex items-center gap-3 flex-wrap">
                 <button onClick={async()=>{setSyncMsg("Synchronisiere…");const ok=await doSync(today);setSyncMsg(ok?`✓ Sync: ${new Date().toLocaleString("de-DE")}`:"✗ Fehlgeschlagen");}} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><RefreshCw size={12}/> Jetzt synchronisieren</button>
                 <label className="flex items-center gap-2 text-xs text-dash-muted cursor-pointer"><input type="checkbox" checked={settings.autoSync} onChange={e=>setSettings(s=>({...s,autoSync:e.target.checked}))}/>Täglich um <input type="time" value={settings.notifTime} onChange={e=>setSettings(s=>({...s,notifTime:e.target.value}))} className="w-24 px-2 py-1 text-xs bg-dash-bg border border-dash-border rounded-lg text-white focus:outline-none focus:border-indigo-500"/> Uhr</label>
@@ -603,6 +719,31 @@ export default function HabitsPage() {
               {syncMsg&&<p className="text-[11px] text-dash-muted">{syncMsg}</p>}
               {settings.lastSync&&<p className="text-[11px] text-dash-muted/50">Letzter Sync: {new Date(settings.lastSync).toLocaleString("de-DE")}</p>}
             </div>
+
+            {/* Standort für Wetter */}
+            <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
+              <p className="text-sm font-semibold text-white">Standort (Temperaturanpassung)</p>
+              <p className="text-xs text-dash-muted leading-relaxed">
+                Wird für die Wetterdaten via Open-Meteo genutzt, um das Wasserziel temperaturabhängig anzupassen.
+                <br/>Formel: &lt;20°C: +0 L · 20–25°C: +0,3 L · 25–30°C: +0,6 L · 30–35°C: +0,9 L · &gt;35°C: +1,2 L
+              </p>
+              <div>
+                <label className="text-[11px] text-dash-muted block mb-1">Ortsname (zur Anzeige)</label>
+                <input type="text" value={settings.locationName} onChange={e=>setSettings(s=>({...s,locationName:e.target.value}))} placeholder="z. B. Ennigerloh" className="w-48 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <button onClick={getLocation} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors">
+                  <MapPin size={12}/> Standort automatisch ermitteln
+                </button>
+                {settings.latitude!==null&&(
+                  <span className="text-[11px] text-dash-muted">✓ {settings.latitude?.toFixed(3)}, {settings.longitude?.toFixed(3)}</span>
+                )}
+              </div>
+              {settings.latitude===null&&(
+                <p className="text-[11px] text-yellow-200/60">Ohne Standort wird eine Standardtemperatur von 18°C angenommen.</p>
+              )}
+            </div>
+
             <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
               <p className="text-sm font-semibold text-white">Benachrichtigungen</p>
               <p className="text-xs text-dash-muted">Erinnerung wenn Habits noch nicht erledigt sind. Seite muss dafür offen sein.</p>
@@ -614,7 +755,7 @@ export default function HabitsPage() {
             </div>
             <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
               <p className="text-sm font-semibold text-white">Daten-Export (3-2-1 Backup)</p>
-              <p className="text-xs text-dash-muted">Daten liegen im Browser-localStorage. Monatlich exportieren und in Paperless-ngx ablegen.</p>
+              <p className="text-xs text-dash-muted">Monatlich exportieren und in Paperless-ngx ablegen.</p>
               <div className="flex gap-2 flex-wrap"><button onClick={exportCSV} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><Download size={12}/> CSV</button><button onClick={exportJSON} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><Download size={12}/> JSON</button></div>
               <div><label className="text-[11px] text-dash-muted block mb-1">JSON importieren <strong>(überschreibt alle Daten!)</strong></label><input type="file" accept=".json" onChange={e=>{const file=e.target.files?.[0];if(!file)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target?.result as string);if(d.habits)setHabits(d.habits);if(d.history){const norm:History={};for(const[k,v]of Object.entries(d.history))norm[k]=normalizeDay(v);setHistory(norm);}e.target.value="";}catch{alert("Ungültige JSON-Datei.");}};r.readAsText(file);}} className="text-xs text-dash-muted"/></div>
             </div>
