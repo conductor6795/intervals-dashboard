@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart2, Calendar, FlaskConical, Heart, Scale, Settings, TrendingUp, Zap, X, Activity, GitCompare, Dumbbell } from "lucide-react";
+import { BarChart2, Calendar, FlaskConical, Heart, Scale, Settings, TrendingUp, Zap, X, Activity, GitCompare, Dumbbell, CheckSquare } from "lucide-react";
 import { clsx } from "clsx";
 import { useState, useEffect } from "react";
 import { getPageSettings } from "@/lib/settings";
@@ -10,8 +10,8 @@ const NAV_ALWAYS = [
   { href: "/", label: "Übersicht", icon: Zap },
   { href: "/hrv", label: "HRV & Erholung", icon: Heart },
   { href: "/fitness", label: "Fitness-Trend", icon: TrendingUp },
+  { href: "/habits", label: "Habits", icon: CheckSquare },
   { href: "/wellness", label: "Wellness", icon: BarChart2 },
-  { href: "/performance", label: "Leistungsdaten", icon: Activity },
   { href: "/compare", label: "Vergleich", icon: GitCompare },
   { href: "/calendar", label: "Kalender", icon: Calendar },
 ];
@@ -48,7 +48,7 @@ export default function Sidebar({ isOpen = true, onClose }: Props) {
     ...NAV_ALWAYS,
     ...NAV_TOGGLEABLE.filter((p) => pageSettings[p.id] !== false),
   ].sort((a, b) => {
-    const order = ["/", "/hrv", "/fitness", "/training", "/wellness", "/koerper", "/analyse", "/performance", "/compare", "/calendar"];
+    const order = ["/", "/hrv", "/fitness", "/training", "/wellness", "/koerper", "/analyse", "/compare", "/calendar"];
     return order.indexOf(a.href) - order.indexOf(b.href);
   });
 
