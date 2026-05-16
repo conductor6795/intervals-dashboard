@@ -49,6 +49,7 @@ const TICK_STYLE    = { fill:"#94a3b8", fontSize:10 } as const;
 const TOOLTIP_STYLE = { backgroundColor:"#131929", border:"1px solid #1e2d4a", borderRadius:8, fontSize:11 } as const;
 const MOOD_COLORS   = ["transparent","#ef4444","#f59e0b","#94a3b8","#3b82f6","#10b981"];
 const GRID_COL      = { display:"grid", gridTemplateColumns:"repeat(7, 16px)", gap:"3px" } as const;
+const VESSEL_SIZES  = [0.2, 0.3, 0.7]; // Liter
 
 function toDS(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
@@ -80,106 +81,77 @@ function calcLastDone(h: Habit, history: History): number | null {
   for(let i=0;i<90;i++){if(isCompleted(h,daysAgo(i),history))return i;} return null;
 }
 
-/* ── Period helpers ── */
 function periodDays(p: Period): number {
-  if (p==="4w") return 28;
-  if (p==="3m") return 90;
-  if (p==="6m") return 180;
-  return 365;
+  if (p==="4w") return 28; if (p==="3m") return 90; if (p==="6m") return 180; return 365;
 }
-
 function periodRate(h: Habit, history: History, p: Period): number {
-  const days = periodDays(p);
-  let c=0, total=0;
-  for(let i=0;i<days;i++){ const ds=daysAgo(i); if(ds<=todayStr()){total++;if(isCompleted(h,ds,history))c++;} }
-  return total>0 ? Math.round(c/total*100) : 0;
+  const days=periodDays(p); let c=0,total=0;
+  for(let i=0;i<days;i++){const ds=daysAgo(i);if(ds<=todayStr()){total++;if(isCompleted(h,ds,history))c++;}}
+  return total>0?Math.round(c/total*100):0;
 }
-
 function buildPeriodData(h: Habit, history: History, p: Period) {
-  if (p==="4w") return null; // show grid instead
-  const days = periodDays(p);
-  const granularity = (p==="3m"||p==="6m") ? "week" : "month";
-
-  if (granularity==="week") {
-    const weeks = Math.ceil(days/7);
+  if (p==="4w") return null;
+  const days=periodDays(p), gran=(p==="3m"||p==="6m")?"week":"month";
+  if (gran==="week") {
+    const weeks=Math.ceil(days/7);
     return Array.from({length:weeks},(_,w)=>{
-      const wIdx = weeks-1-w;
-      let c=0;
-      for(let d=0;d<7;d++){if(isCompleted(h,daysAgo(wIdx*7+d),history))c++;}
-      return { label:`-${(wIdx+1)*7}d`, value:Math.round(c/7*100) };
+      const wi=weeks-1-w; let c=0;
+      for(let d=0;d<7;d++){if(isCompleted(h,daysAgo(wi*7+d),history))c++;}
+      return{label:`-${(wi+1)*7}d`,value:Math.round(c/7*100)};
     });
   }
-  // monthly
-  const result = [];
+  const result=[];
   for(let m=11;m>=0;m--){
-    const date=new Date(); date.setDate(1); date.setMonth(date.getMonth()-m);
-    const monthStart=new Date(date.getFullYear(),date.getMonth(),1);
-    const daysInMonth=new Date(date.getFullYear(),date.getMonth()+1,0).getDate();
+    const date=new Date();date.setDate(1);date.setMonth(date.getMonth()-m);
+    const ms=new Date(date.getFullYear(),date.getMonth(),1);
+    const dim=new Date(date.getFullYear(),date.getMonth()+1,0).getDate();
     let c=0,total=0;
-    for(let d=0;d<daysInMonth;d++){
-      const dd=new Date(monthStart); dd.setDate(d+1);
-      if(toDS(dd)<=todayStr()){total++;if(isCompleted(h,toDS(dd),history))c++;}
-    }
-    result.push({
-      label:date.toLocaleDateString("de-DE",{month:"short",year:"2-digit"}),
-      value:total>0?Math.round(c/total*100):0
-    });
+    for(let d=0;d<dim;d++){const dd=new Date(ms);dd.setDate(d+1);if(toDS(dd)<=todayStr()){total++;if(isCompleted(h,toDS(dd),history))c++;}}
+    result.push({label:date.toLocaleDateString("de-DE",{month:"short",year:"2-digit"}),value:total>0?Math.round(c/total*100):0});
   }
   return result;
 }
 
-/* ── HabitGrid ── */
 function HabitGrid({ habit, history, today, onToggle }: {
   habit: Habit; history: History; today: string; onToggle?: (date: string)=>void;
 }) {
-  const now=new Date(), dow=(now.getDay()+6)%7;
-  const start=new Date(now); start.setDate(now.getDate()-dow-21);
-
-  const cells = Array.from({length:28},(_,i)=>{
-    const d=new Date(start); d.setDate(start.getDate()+i);
-    const ds=toDS(d), done=isCompleted(habit,ds,history);
-    const isFut=ds>today, isTod=ds===today, clickable=!!onToggle&&!isFut;
-    return (
-      <div key={ds} title={`${ds}${done?" ✓":""}`}
-        onClick={clickable?()=>onToggle!(ds):undefined}
-        style={{
-          width:16, height:16, borderRadius:3,
-          background:done?habit.color:isFut?"transparent":"rgba(30,45,74,0.4)",
+  const now=new Date(),dow=(now.getDay()+6)%7;
+  const start=new Date(now);start.setDate(now.getDate()-dow-21);
+  const cells=Array.from({length:28},(_,i)=>{
+    const d=new Date(start);d.setDate(start.getDate()+i);
+    const ds=toDS(d),done=isCompleted(habit,ds,history);
+    const isFut=ds>today,isTod=ds===today,clickable=!!onToggle&&!isFut;
+    return(
+      <div key={ds} title={`${ds}${done?" ✓":""}`} onClick={clickable?()=>onToggle!(ds):undefined}
+        style={{width:16,height:16,borderRadius:3,background:done?habit.color:isFut?"transparent":"rgba(30,45,74,0.4)",
           border:isTod?"2px solid #94a3b8":"0.5px solid rgba(30,45,74,0.8)",
-          boxSizing:"border-box", cursor:clickable?"pointer":"default",
-          opacity:isFut?0.2:1, transition:"opacity 0.15s",
-        }}
-      />
+          boxSizing:"border-box",cursor:clickable?"pointer":"default",opacity:isFut?0.2:1,transition:"opacity 0.15s"}}/>
     );
   });
-
-  return (
+  return(
     <div className="mt-3">
-      {/* Header uses same fixed grid as cells → perfect alignment */}
-      <div style={{...GRID_COL, marginBottom:3}}>
-        {DOW.map(d=>(
-          <div key={d} style={{width:16,textAlign:"center",fontSize:9,color:"#94a3b8",opacity:0.4}}>{d}</div>
-        ))}
+      <div style={{...GRID_COL,marginBottom:3}}>
+        {DOW.map(d=><div key={d} style={{width:16,textAlign:"center",fontSize:9,color:"#94a3b8",opacity:0.4}}>{d}</div>)}
       </div>
       <div style={GRID_COL}>{cells}</div>
-      {onToggle && <p className="text-[9px] text-dash-muted/40 mt-1">Kästchen anklicken zum Umschalten</p>}
+      {onToggle&&<p className="text-[9px] text-dash-muted/40 mt-1">Kästchen anklicken zum Umschalten</p>}
     </div>
   );
 }
 
-/* ══ MAIN PAGE ══ */
 export default function HabitsPage() {
-  const [habits,      setHabits]      = useState<Habit[]>([]);
-  const [history,     setHistory]     = useState<History>({});
-  const [settings,    setSettings]    = useState<HabitSettings>({ ivAthleteId:"", ivApiKey:"", notifEnabled:false, notifTime:"22:00", autoSync:false, lastSync:null });
-  const [tab,         setTab]         = useState<Tab>("today");
-  const [statsSub,    setStatsSub]    = useState<"stats"|"corr">("stats");
-  const [statsPeriod, setStatsPeriod] = useState<Period>("4w");
-  const [selDate,     setSelDate]     = useState(todayStr());
-  const [form,        setForm]        = useState<(Partial<Habit>&{error?:string})|null>(null);
-  const [delId,       setDelId]       = useState<string|null>(null);
-  const [syncMsg,     setSyncMsg]     = useState("");
-  const [loaded,      setLoaded]      = useState(false);
+  const [habits,         setHabits]         = useState<Habit[]>([]);
+  const [history,        setHistory]        = useState<History>({});
+  const [settings,       setSettings]       = useState<HabitSettings>({ ivAthleteId:"", ivApiKey:"", notifEnabled:false, notifTime:"22:00", autoSync:false, lastSync:null });
+  const [dynamicTargets, setDynamicTargets] = useState<Record<string, number>>({});
+  const [tab,            setTab]            = useState<Tab>("today");
+  const [statsSub,       setStatsSub]       = useState<"stats"|"corr">("stats");
+  const [statsPeriod,    setStatsPeriod]    = useState<Period>("4w");
+  const [selDate,        setSelDate]        = useState(todayStr());
+  const [form,           setForm]           = useState<(Partial<Habit>&{error?:string})|null>(null);
+  const [delId,          setDelId]          = useState<string|null>(null);
+  const [syncMsg,        setSyncMsg]        = useState("");
+  const [loaded,         setLoaded]         = useState(false);
 
   useEffect(()=>{
     try{setHabits(JSON.parse(localStorage.getItem("ht_habits")||"null")??DEFAULTS);}catch{setHabits(DEFAULTS);}
@@ -200,7 +172,7 @@ export default function HabitsPage() {
   useEffect(()=>{
     if(!loaded||!settings.notifEnabled||typeof Notification==="undefined"||Notification.permission!=="granted")return;
     const[hh,mm]=settings.notifTime.split(":").map(Number);
-    const now=new Date(),target=new Date(now); target.setHours(hh,mm,0,0);
+    const now=new Date(),target=new Date(now);target.setHours(hh,mm,0,0);
     if(target<=now)target.setDate(target.getDate()+1);
     const tid=window.setTimeout(async()=>{
       const td=todayStr(),done=habits.filter(h=>isCompleted(h,td,history)).length;
@@ -211,33 +183,55 @@ export default function HabitsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[settings.notifEnabled,settings.notifTime,settings.autoSync,loaded]);
 
+  /* ── Dynamisches Hydrationsziel von intervals.icu Aktivitäten ── */
+  useEffect(()=>{
+    if(!settings.ivAthleteId||!settings.ivApiKey||!loaded)return;
+    const waterHabits=habits.filter(h=>h.habitType==="numeric"&&["l","liter"].includes(h.unit.toLowerCase()));
+    if(!waterHabits.length)return;
+    fetch(`https://intervals.icu/api/v1/athlete/${settings.ivAthleteId}/activities?oldest=${selDate}&newest=${selDate}`,
+      {headers:{Authorization:"Basic "+btoa(`API_KEY:${settings.ivApiKey}`)}})
+      .then(r=>r.ok?r.json():[])
+      .then((acts:Array<{moving_time?:number}>)=>{
+        const totalHours=acts.reduce((s,a)=>s+(a.moving_time||0)/3600,0);
+        const extraL=Math.round(totalHours*5)/10; // +0,5L pro Trainingsstunde
+        if(extraL>0){
+          const dt:Record<string,number>={};
+          waterHabits.forEach(h=>{dt[h.id]=Math.round((h.numTarget+extraL)*10)/10;});
+          setDynamicTargets(dt);
+        }else{
+          setDynamicTargets({});
+        }
+      })
+      .catch(()=>{});
+  },[selDate,settings.ivAthleteId,settings.ivApiKey,habits,loaded]);
+
   const today     = todayStr();
   const isToday   = selDate===today;
   const day       = useMemo(()=>normalizeDay(history[selDate]),[history,selDate]);
   const doneCount = useMemo(()=>habits.filter(h=>isCompleted(h,selDate,history)).length,[habits,history,selDate]);
-  const pct       = habits.length ? doneCount/habits.length : 0;
+  const pct       = habits.length?doneCount/habits.length:0;
   const selLabel  = useMemo(()=>{
     const d=fromDS(selDate);
     return{dow:d.toLocaleDateString("de-DE",{weekday:"long"}),dat:d.toLocaleDateString("de-DE",{day:"numeric",month:"long",year:"numeric"})};
   },[selDate]);
 
-  const prevDate = ()=>{const d=fromDS(selDate);d.setDate(d.getDate()-1);setSelDate(toDS(d));};
-  const nextDate = ()=>{if(isToday)return;const d=fromDS(selDate);d.setDate(d.getDate()+1);setSelDate(toDS(d));};
+  const prevDate=()=>{const d=fromDS(selDate);d.setDate(d.getDate()-1);setSelDate(toDS(d));};
+  const nextDate=()=>{if(isToday)return;const d=fromDS(selDate);d.setDate(d.getDate()+1);setSelDate(toDS(d));};
 
-  const toggle = useCallback((id:string)=>{
+  const toggle=useCallback((id:string)=>{
     setHistory(prev=>{const day=normalizeDay(prev[selDate]);const i=day.checked.indexOf(id);if(i>=0)day.checked.splice(i,1);else day.checked.push(id);return{...prev,[selDate]:day};});
   },[selDate]);
 
-  const setNum = useCallback((id:string,raw:string|number)=>{
+  const setNum=useCallback((id:string,raw:string|number)=>{
     const v=parseFloat(String(raw));
     setHistory(prev=>{const day=normalizeDay(prev[selDate]);if(isNaN(v))delete day.numeric[id];else day.numeric[id]=Math.max(0,Math.round(v*10)/10);return{...prev,[selDate]:day};});
   },[selDate]);
 
-  const setMood = useCallback((val:number)=>{
+  const setMood=useCallback((val:number)=>{
     setHistory(prev=>{const day=normalizeDay(prev[selDate]);day.mood=day.mood===val?null:val;return{...prev,[selDate]:day};});
   },[selDate]);
 
-  const toggleDate = useCallback((hb:Habit,date:string)=>{
+  const toggleDate=useCallback((hb:Habit,date:string)=>{
     setHistory(prev=>{
       const day=normalizeDay(prev[date]);
       if(hb.habitType==="checkbox"){const i=day.checked.indexOf(hb.id);if(i>=0)day.checked.splice(i,1);else day.checked.push(hb.id);}
@@ -246,7 +240,7 @@ export default function HabitsPage() {
     });
   },[]);
 
-  const moveHabit = (id:string,dir:-1|1)=>{
+  const moveHabit=(id:string,dir:-1|1)=>{
     setHabits(prev=>{
       const i=prev.findIndex(h=>h.id===id),j=i+dir;
       if(j<0||j>=prev.length)return prev;
@@ -261,9 +255,9 @@ export default function HabitsPage() {
     return`${l===0?"Heute":l+" Tage her"} ${l>=h.goalValue?"✓":"⚠"}`;
   }
 
-  const openAdd  = ()=>setForm({id:"",name:"",emoji:"💧",color:"#3b82f6",habitType:"checkbox",unit:"",numTarget:0,goalType:"daily",goalValue:3});
-  const openEdit = (h:Habit)=>{setForm({...h});setDelId(null);};
-  const saveForm = ()=>{
+  const openAdd=()=>setForm({id:"",name:"",emoji:"💧",color:"#3b82f6",habitType:"checkbox",unit:"",numTarget:0,goalType:"daily",goalValue:3});
+  const openEdit=(h:Habit)=>{setForm({...h});setDelId(null);};
+  const saveForm=()=>{
     if(!form)return;
     if(!form.name?.trim()){setForm(f=>f?{...f,error:"Name fehlt"}:null);return;}
     const entry:Habit={id:form.id||"h"+Date.now(),name:form.name.trim(),emoji:form.emoji||"💧",color:form.color||COLORS[0],habitType:form.habitType||"checkbox",unit:form.unit||"",numTarget:form.numTarget||0,goalType:form.goalType||"daily",goalValue:form.goalValue||1};
@@ -271,7 +265,7 @@ export default function HabitsPage() {
     setForm(null);
   };
 
-  const doSync = async(date:string):Promise<boolean>=>{
+  const doSync=async(date:string):Promise<boolean>=>{
     if(!settings.ivAthleteId||!settings.ivApiKey)return false;
     const d=normalizeDay(history[date]);
     const tags=habits.filter(h=>d.checked.includes(h.id)).map(h=>h.name.replace(/\s+/g,"_"));
@@ -284,7 +278,7 @@ export default function HabitsPage() {
     }catch(e){console.error("intervals.icu:",e);return false;}
   };
 
-  const corrData = useMemo(()=>Array.from({length:12},(_,w)=>{
+  const corrData=useMemo(()=>Array.from({length:12},(_,w)=>{
     const obj:Record<string,unknown>={label:`W-${(11-w)*7}d`};
     habits.forEach(h=>{let c=0;for(let d=0;d<7;d++){if(isCompleted(h,daysAgo((11-w)*7+d),history))c++;}obj[h.name]=Math.round(c/7*100);});
     return obj;
@@ -354,10 +348,15 @@ export default function HabitsPage() {
             {habits.length===0&&<div className="rounded-2xl border border-dashed border-dash-border p-10 text-center text-dash-muted text-sm">Noch keine Habits.<br/>Im Tab <strong className="text-white">Verwalten</strong> anfangen.</div>}
 
             {habits.map(hb=>{
-              const done=isCompleted(hb,selDate,history),numVal=hb.habitType==="numeric"?(day.numeric[hb.id]??null):null;
+              const done=isCompleted(hb,selDate,history);
+              const numVal=hb.habitType==="numeric"?(day.numeric[hb.id]??null):null;
+              const isLUnit=["l","liter"].includes(hb.unit.toLowerCase());
+              const effectiveTarget=dynamicTargets[hb.id]??hb.numTarget;
+              const isDynamic=!!dynamicTargets[hb.id];
+
               return(
                 <div key={hb.id}
-                  className={clsx("flex items-center gap-3 p-3.5 rounded-2xl border bg-dash-card transition-colors",hb.habitType==="checkbox"&&"cursor-pointer select-none")}
+                  className={clsx("flex items-start gap-3 p-3.5 rounded-2xl border bg-dash-card transition-colors",hb.habitType==="checkbox"&&"cursor-pointer select-none items-center")}
                   style={{borderColor:done?hb.color+"60":undefined}}
                   onClick={hb.habitType==="checkbox"?()=>toggle(hb.id):undefined}
                   role={hb.habitType==="checkbox"?"checkbox":undefined}
@@ -365,19 +364,44 @@ export default function HabitsPage() {
                   tabIndex={hb.habitType==="checkbox"?0:undefined}
                   onKeyDown={hb.habitType==="checkbox"?e=>{if(e.key==="Enter"||e.key===" ")toggle(hb.id);}:undefined}
                 >
-                  <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-base transition-all" style={{border:`2px solid ${hb.color}`,background:done?hb.color:"transparent",color:done?"#fff":hb.color}}>
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-base transition-all mt-0.5" style={{border:`2px solid ${hb.color}`,background:done?hb.color:"transparent",color:done?"#fff":hb.color}}>
                     {done?"✓":hb.emoji}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-white">{hb.name}</p>
                     <p className="text-[11px] text-dash-muted">{badge(hb)}</p>
                   </div>
+
+                  {/* ── Numerisches Habit: Eingabe + Gefäß-Buttons ── */}
                   {hb.habitType==="numeric"&&(
-                    <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e=>e.stopPropagation()}>
-                      <button onClick={()=>setNum(hb.id,Math.max(0,Math.round(((numVal??0)*10-5))/10))} className="w-7 h-7 rounded-lg border border-dash-border text-dash-muted hover:text-white text-base flex items-center justify-center transition-colors">−</button>
-                      <input type="number" step="0.5" min="0" value={numVal??""} placeholder="0" onChange={e=>setNum(hb.id,e.target.value)} onClick={e=>(e.target as HTMLInputElement).select()} className="w-12 text-center text-sm bg-dash-bg border border-dash-border rounded-lg py-1 text-white tabular-nums focus:outline-none focus:border-indigo-500 transition-colors"/>
-                      <button onClick={()=>setNum(hb.id,Math.round(((numVal??0)*10+5))/10)} className="w-7 h-7 rounded-lg border border-dash-border text-dash-muted hover:text-white text-base flex items-center justify-center transition-colors">+</button>
-                      <span className="text-[11px] text-dash-muted whitespace-nowrap">/{hb.numTarget} {hb.unit}</span>
+                    <div className="flex flex-col items-end gap-1.5 flex-shrink-0" onClick={e=>e.stopPropagation()}>
+                      {/* Haupteingabe */}
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={()=>setNum(hb.id,Math.max(0,Math.round(((numVal??0)*10-5))/10))} className="w-7 h-7 rounded-lg border border-dash-border text-dash-muted hover:text-white text-base flex items-center justify-center transition-colors">−</button>
+                        <input type="number" step="0.5" min="0" value={numVal??""} placeholder="0"
+                          onChange={e=>setNum(hb.id,e.target.value)}
+                          onClick={e=>(e.target as HTMLInputElement).select()}
+                          className="w-12 text-center text-sm bg-dash-bg border border-dash-border rounded-lg py-1 text-white tabular-nums focus:outline-none focus:border-indigo-500 transition-colors"/>
+                        <button onClick={()=>setNum(hb.id,Math.round(((numVal??0)*10+5))/10)} className="w-7 h-7 rounded-lg border border-dash-border text-dash-muted hover:text-white text-base flex items-center justify-center transition-colors">+</button>
+                        <span className="text-[11px] text-dash-muted whitespace-nowrap">
+                          /{effectiveTarget} {hb.unit}
+                          {isDynamic&&(
+                            <span className="ml-1 text-indigo-300 cursor-help" title={`Ziel um +${Math.round((effectiveTarget-hb.numTarget)*1000)}ml erhöht (heutige Aktivität)`}>⚡</span>
+                          )}
+                        </span>
+                      </div>
+                      {/* Gefäß-Schnellbuttons — nur für L-Habits */}
+                      {isLUnit&&(
+                        <div className="flex gap-1">
+                          {VESSEL_SIZES.map(amt=>(
+                            <button key={amt}
+                              onClick={()=>setNum(hb.id,Math.round(((numVal??0)+amt)*10)/10)}
+                              className="text-[10px] px-2 py-0.5 rounded-lg border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/40 transition-colors">
+                              +{amt*1000}ml
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -400,7 +424,6 @@ export default function HabitsPage() {
 
             {statsSub==="stats"&&(
               <>
-                {/* Zeitraum-Filter */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[11px] text-dash-muted">Zeitraum:</span>
                   {PERIODS.map(p=>(
@@ -414,19 +437,16 @@ export default function HabitsPage() {
                 {habits.length===0&&<div className="rounded-2xl border border-dashed border-dash-border p-10 text-center text-dash-muted text-sm">Noch keine Habits vorhanden.</div>}
 
                 {habits.map(hb=>{
-                  const rate   = periodRate(hb,history,statsPeriod);
-                  const streak = calcStreak(hb,history);
-                  const wc     = calcWeekCount(hb,history);
-                  const ld     = calcLastDone(hb,history);
-                  const chartData = buildPeriodData(hb,history,statsPeriod);
+                  const rate=periodRate(hb,history,statsPeriod);
+                  const streak=calcStreak(hb,history),wc=calcWeekCount(hb,history),ld=calcLastDone(hb,history);
+                  const chartData=buildPeriodData(hb,history,statsPeriod);
                   let avgNum:number|null=null;
                   if(hb.habitType==="numeric"){
                     const days=periodDays(statsPeriod);let sum=0,cnt=0;
                     for(let i=0;i<days;i++){const v=normalizeDay(history[daysAgo(i)]).numeric[hb.id];if(v!==undefined){sum+=v;cnt++;}}
                     avgNum=cnt>0?Math.round(sum/cnt*10)/10:null;
                   }
-                  const periodLabel = PERIODS.find(p=>p.id===statsPeriod)?.label;
-
+                  const periodLabel=PERIODS.find(p=>p.id===statsPeriod)?.label;
                   return(
                     <div key={hb.id} className="rounded-2xl border border-dash-border bg-dash-card p-4">
                       <div className="flex items-center gap-3">
@@ -440,8 +460,6 @@ export default function HabitsPage() {
                           <p className="text-[10px] text-dash-muted">{periodLabel}</p>
                         </div>
                       </div>
-
-                      {/* 4W → Grid, sonst Balkendiagramm */}
                       {statsPeriod==="4w"?(
                         <HabitGrid habit={hb} history={history} today={today} onToggle={date=>toggleDate(hb,date)}/>
                       ):(
@@ -457,7 +475,6 @@ export default function HabitsPage() {
                           </ResponsiveContainer>
                         </div>
                       )}
-
                       <div className="flex gap-5 mt-3 pt-3 border-t border-dash-border flex-wrap">
                         {hb.goalType==="daily"&&<div><p className="text-lg font-bold tabular-nums text-white">{streak}</p><p className="text-[10px] text-dash-muted">Streak</p></div>}
                         {hb.goalType==="min_per_week"&&<div><p className="text-lg font-bold tabular-nums" style={{color:wc>=hb.goalValue?"#10b981":"#94a3b8"}}>{wc}/{hb.goalValue}</p><p className="text-[10px] text-dash-muted">diese Woche</p></div>}
@@ -576,7 +593,7 @@ export default function HabitsPage() {
           <>
             <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
               <p className="text-sm font-semibold text-white">intervals.icu Wellness-Sync</p>
-              <p className="text-xs text-dash-muted leading-relaxed">Habits werden als <strong className="text-white">Tags + Kommentar</strong> eingetragen — Readiness wird <em>nicht</em> überschrieben. Mood → <code className="text-indigo-300 text-[10px]">motivation</code>.</p>
+              <p className="text-xs text-dash-muted leading-relaxed">Habits werden als <strong className="text-white">Tags + Kommentar</strong> eingetragen — Readiness wird <em>nicht</em> überschrieben. Mood → <code className="text-indigo-300 text-[10px]">motivation</code>. Mit hinterlegtem API-Key wird das Wasserziel automatisch an die Trainingsbelastung des Tages angepasst (+0,5 L/Std.).</p>
               <div><label className="text-[11px] text-dash-muted block mb-1">Athleten-ID</label><input type="text" value={settings.ivAthleteId} onChange={e=>setSettings(s=>({...s,ivAthleteId:e.target.value}))} placeholder="i12345" className="w-40 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
               <div><label className="text-[11px] text-dash-muted block mb-1">API-Key <span className="text-dash-muted/50">(intervals.icu → Einstellungen → API)</span></label><input type="password" value={settings.ivApiKey} onChange={e=>setSettings(s=>({...s,ivApiKey:e.target.value}))} placeholder="••••••••" className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
               <div className="flex items-center gap-3 flex-wrap">
