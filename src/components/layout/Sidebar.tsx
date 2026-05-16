@@ -4,26 +4,26 @@ import { usePathname } from "next/navigation";
 import {
   BarChart2, Calendar, FlaskConical, Heart, Scale, Settings,
   TrendingUp, Zap, X, Activity, GitCompare, Dumbbell,
-  CheckSquare, ArrowUp, ArrowDown,
+  CheckSquare, ChevronUp, ChevronDown,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useState, useEffect } from "react";
 import { getPageSettings } from "@/lib/settings";
 
 const NAV_ALWAYS = [
-  { href: "/",           label: "Übersicht",     icon: Zap          },
-  { href: "/hrv",        label: "HRV & Erholung", icon: Heart        },
-  { href: "/fitness",    label: "Fitness-Trend",  icon: TrendingUp   },
-  { href: "/habits",     label: "Habits",         icon: CheckSquare  },
-  { href: "/wellness",   label: "Wellness",       icon: BarChart2    },
-  { href: "/performance",label: "Leistungsdaten", icon: Activity     },
-  { href: "/compare",    label: "Vergleich",      icon: GitCompare   },
-  { href: "/calendar",   label: "Kalender",       icon: Calendar     },
+  { href: "/",            label: "Übersicht",      icon: Zap          },
+  { href: "/hrv",         label: "HRV & Erholung", icon: Heart        },
+  { href: "/fitness",     label: "Fitness-Trend",  icon: TrendingUp   },
+  { href: "/habits",      label: "Habits",         icon: CheckSquare  },
+  { href: "/wellness",    label: "Wellness",       icon: BarChart2    },
+  { href: "/performance", label: "Leistungsdaten", icon: Activity     },
+  { href: "/compare",     label: "Vergleich",      icon: GitCompare   },
+  { href: "/calendar",    label: "Kalender",       icon: Calendar     },
 ];
 
 const NAV_TOGGLEABLE = [
-  { href: "/training", label: "Training",      icon: Dumbbell,     id: "training" },
-  { href: "/koerper",  label: "Körper & Ziele", icon: Scale,       id: "koerper"  },
+  { href: "/training", label: "Training",       icon: Dumbbell,     id: "training" },
+  { href: "/koerper",  label: "Körper & Ziele", icon: Scale,        id: "koerper"  },
   { href: "/analyse",  label: "Analyse",        icon: FlaskConical, id: "analyse"  },
 ];
 
@@ -39,15 +39,14 @@ export default function Sidebar({ isOpen = true, onClose }: Props) {
     Object.fromEntries(NAV_TOGGLEABLE.map((p) => [p.id, true]))
   );
 
-  // Reihenfolge aus localStorage (Array von hrefs)
   const [navOrder, setNavOrder] = useState<string[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("sidebar-order") || "null") ?? [];
-    } catch { return []; }
+    if (typeof window === "undefined") return [];
+    try { return JSON.parse(localStorage.getItem("sidebar-order") || "null") ?? []; }
+    catch { return []; }
   });
 
-  // Edit-Modus zum Umordnen
-  const [editOrder, setEditOrder] = useState(false);
+  // Welcher Eintrag wird gerade gehovered (für ↑↓ Buttons)
+  const [hovered, setHovered] = useState<string | null>(null);
 
   useEffect(() => {
     setPageSettings(getPageSettings());
@@ -60,13 +59,11 @@ export default function Sidebar({ isOpen = true, onClose }: Props) {
     };
   }, []);
 
-  // Alle aktiven Nav-Einträge zusammenbauen
   const allNav = [
     ...NAV_ALWAYS,
     ...NAV_TOGGLEABLE.filter((p) => pageSettings[p.id] !== false),
   ];
 
-  // Reihenfolge anwenden (gespeicherte Reihenfolge, neue Einträge ans Ende)
   const nav = navOrder.length
     ? [...allNav].sort((a, b) => {
         const ai = navOrder.indexOf(a.href);
@@ -76,14 +73,24 @@ export default function Sidebar({ isOpen = true, onClose }: Props) {
     : allNav;
 
   const moveNav = (href: string, dir: -1 | 1) => {
-    const base = navOrder.length ? navOrder : nav.map((n) => n.href);
+    const base = navOrder.length ? [...navOrder] : nav.map((n) => n.href);
     const i = base.indexOf(href);
+    if (i === -1) {
+      // href noch nicht in gespeicherter Reihenfolge — alle erst eintragen
+      const full = nav.map((n) => n.href);
+      const fi = full.indexOf(href);
+      const fj = fi + dir;
+      if (fj < 0 || fj >= full.length) return;
+      [full[fi], full[fj]] = [full[fj], full[fi]];
+      localStorage.setItem("sidebar-order", JSON.stringify(full));
+      setNavOrder(full);
+      return;
+    }
     const j = i + dir;
     if (j < 0 || j >= base.length) return;
-    const next = [...base];
-    [next[i], next[j]] = [next[j], next[i]];
-    localStorage.setItem("sidebar-order", JSON.stringify(next));
-    setNavOrder(next);
+    [base[i], base[j]] = [base[j], base[i]];
+    localStorage.setItem("sidebar-order", JSON.stringify(base));
+    setNavOrder(base);
   };
 
   return (
@@ -113,10 +120,17 @@ export default function Sidebar({ isOpen = true, onClose }: Props) {
 
       {/* Nav */}
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-        {nav.map(({ href, label, icon: Icon }) => {
-          const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+        {nav.map(({ href, label, icon: Icon }, idx) => {
+          const active  = href === "/" ? pathname === "/" : pathname.startsWith(href);
+          const isHover = hovered === href;
+
           return (
-            <div key={href} className="flex items-center gap-1">
+            <div
+              key={href}
+              className="flex items-center gap-1 group"
+              onMouseEnter={() => setHovered(href)}
+              onMouseLeave={() => setHovered(null)}
+            >
               <Link
                 href={href}
                 className={clsx(
@@ -131,25 +145,25 @@ export default function Sidebar({ isOpen = true, onClose }: Props) {
                 {label}
               </Link>
 
-              {/* Reihenfolge-Buttons im Edit-Modus */}
-              {editOrder && (
-                <div className="flex flex-col gap-0.5 flex-shrink-0">
-                  <button
-                    onClick={() => moveNav(href, -1)}
-                    className="w-5 h-4 flex items-center justify-center text-dash-muted hover:text-white transition-colors rounded"
-                    aria-label="Nach oben"
-                  >
-                    <ArrowUp size={10} />
-                  </button>
-                  <button
-                    onClick={() => moveNav(href, 1)}
-                    className="w-5 h-4 flex items-center justify-center text-dash-muted hover:text-white transition-colors rounded"
-                    aria-label="Nach unten"
-                  >
-                    <ArrowDown size={10} />
-                  </button>
-                </div>
-              )}
+              {/* ↑↓ erscheinen beim Hover — kein extra Button nötig */}
+              <div className={clsx("flex flex-col gap-0.5 flex-shrink-0 transition-opacity", isHover ? "opacity-100" : "opacity-0")}>
+                <button
+                  onClick={(e) => { e.preventDefault(); moveNav(href, -1); }}
+                  disabled={idx === 0}
+                  className="w-5 h-4 flex items-center justify-center text-dash-muted hover:text-white transition-colors rounded disabled:opacity-20"
+                  aria-label="Nach oben"
+                >
+                  <ChevronUp size={11} />
+                </button>
+                <button
+                  onClick={(e) => { e.preventDefault(); moveNav(href, 1); }}
+                  disabled={idx === nav.length - 1}
+                  className="w-5 h-4 flex items-center justify-center text-dash-muted hover:text-white transition-colors rounded disabled:opacity-20"
+                  aria-label="Nach unten"
+                >
+                  <ChevronDown size={11} />
+                </button>
+              </div>
             </div>
           );
         })}
@@ -157,21 +171,6 @@ export default function Sidebar({ isOpen = true, onClose }: Props) {
 
       {/* Footer */}
       <div className="p-3 border-t border-dash-border space-y-0.5">
-        {/* Reihenfolge umschalten */}
-        <button
-          onClick={() => setEditOrder((e) => !e)}
-          className={clsx(
-            "w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs transition-all duration-150",
-            editOrder
-              ? "text-white bg-white/10"
-              : "text-dash-muted hover:text-white hover:bg-white/5"
-          )}
-        >
-          <ArrowUp size={13} />
-          {editOrder ? "Reihenfolge fertig" : "Reihenfolge anpassen"}
-        </button>
-
-        {/* Einstellungen */}
         {(() => {
           const active = pathname.startsWith("/einstellungen");
           return (
@@ -188,7 +187,6 @@ export default function Sidebar({ isOpen = true, onClose }: Props) {
             </Link>
           );
         })()}
-
         <p className="text-[10px] text-dash-muted/40 text-center pt-1">intervals.icu Dashboard</p>
       </div>
     </aside>
