@@ -201,7 +201,7 @@ export default function HabitsPage() {
   const [loaded,         setLoaded]         = useState(false);
   const [syncState,      setSyncState]      = useState<"idle"|"saving"|"saved"|"offline">("idle");
 
-  const saveTimer = useRef<ReturnType<typeof setTimeout>>();
+  const saveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   /* ── Laden: Server → localStorage Fallback ── */
   useEffect(()=>{
