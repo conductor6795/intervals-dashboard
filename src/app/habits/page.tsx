@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, Pencil,
   RefreshCw, Download, Bell, CheckSquare, ChevronUp, ChevronDown, MapPin,
@@ -40,49 +40,37 @@ const MOOD_E = ["😴","😟","😐","😊","🔥"];
 const MOOD_L = ["Sehr schlecht","Schlecht","Okay","Gut","Ausgezeichnet"];
 const DOW    = ["Mo","Di","Mi","Do","Fr","Sa","So"];
 const PERIODS: { id: Period; label: string }[] = [
-  { id:"4w", label:"4 Wochen" },
-  { id:"3m", label:"3 Monate" },
-  { id:"6m", label:"6 Monate" },
-  { id:"1j", label:"1 Jahr"   },
+  { id:"4w", label:"4 Wochen" }, { id:"3m", label:"3 Monate" },
+  { id:"6m", label:"6 Monate" }, { id:"1j", label:"1 Jahr"   },
 ];
 
 const TICK_STYLE    = { fill:"#94a3b8", fontSize:10 } as const;
 const TOOLTIP_STYLE = { backgroundColor:"#131929", border:"1px solid #1e2d4a", borderRadius:8, fontSize:11 } as const;
 const MOOD_COLORS   = ["transparent","#ef4444","#f59e0b","#94a3b8","#3b82f6","#10b981"];
 const GRID_COL      = { display:"grid", gridTemplateColumns:"repeat(7, 16px)", gap:"3px" } as const;
-const VESSEL_SIZES  = [0.2, 0.3, 0.7]; // Liter
+const VESSEL_SIZES  = [0.2, 0.3, 0.7];
 
-/* ── Schweißraten nach Sportart (L/h) — basierend auf ACSM / Gatorade Sports Science Institute ── */
+/* ── Schweißraten nach Sportart (L/h) — ACSM / Gatorade Sports Science Institute ── */
 const SWEAT_RATES: Record<string, number> = {
-  Run: 1.0, VirtualRun: 0.9, TrailRun: 1.1,
-  Ride: 0.8, VirtualRide: 0.95, MountainBikeRide: 0.9, GravelRide: 0.85,
-  Swim: 0.35,
-  Walk: 0.45, Hike: 0.55,
-  WeightTraining: 0.6, Workout: 0.65, Crossfit: 0.8,
-  Soccer: 1.0, Basketball: 0.9, Tennis: 0.75,
-  Rowing: 0.85, Kayaking: 0.55,
+  Run:1.0, VirtualRun:0.9, TrailRun:1.1,
+  Ride:0.8, VirtualRide:0.95, MountainBikeRide:0.9, GravelRide:0.85,
+  Swim:0.35, Walk:0.45, Hike:0.55,
+  WeightTraining:0.6, Workout:0.65, Crossfit:0.8,
+  Soccer:1.0, Basketball:0.9, Tennis:0.75, Rowing:0.85,
 };
-
 function getSweatRateL(type: string, loadPerHour: number): number {
   const base = SWEAT_RATES[type] ?? 0.7;
-  // Intensitätsfaktor aus load/Stunde (TSS-äquivalent)
-  // Leicht <30, Moderat 30–70, Hart 70–120, Sehr hart >120
-  let factor = 1.0;
-  if      (loadPerHour < 30)  factor = 0.70;
-  else if (loadPerHour < 70)  factor = 1.00;
-  else if (loadPerHour < 120) factor = 1.20;
-  else                        factor = 1.40;
-  return base * factor;
+  let f = 1.0;
+  if      (loadPerHour < 30)  f = 0.70;
+  else if (loadPerHour < 70)  f = 1.00;
+  else if (loadPerHour < 120) f = 1.20;
+  else                        f = 1.40;
+  return base * f;
 }
-
-/* ── Temperaturzuschlag (L/Tag) — basierend auf Sportwissenschaft / Thermoregulationsforschung ── */
 function getTempExtra(tempC: number): number {
-  if (tempC < 15) return 0;
-  if (tempC < 20) return 0.1;
-  if (tempC < 25) return 0.3;
-  if (tempC < 30) return 0.6;
-  if (tempC < 35) return 0.9;
-  return 1.2;
+  if (tempC < 15) return 0; if (tempC < 20) return 0.1;
+  if (tempC < 25) return 0.3; if (tempC < 30) return 0.6;
+  if (tempC < 35) return 0.9; return 1.2;
 }
 
 function toDS(d: Date): string {
@@ -114,9 +102,8 @@ function calcWeekCount(h: Habit, history: History): number {
 function calcLastDone(h: Habit, history: History): number | null {
   for(let i=0;i<90;i++){if(isCompleted(h,daysAgo(i),history))return i;} return null;
 }
-
 function periodDays(p: Period): number {
-  if (p==="4w") return 28; if (p==="3m") return 90; if (p==="6m") return 180; return 365;
+  if(p==="4w")return 28; if(p==="3m")return 90; if(p==="6m")return 180; return 365;
 }
 function periodRate(h: Habit, history: History, p: Period): number {
   const days=periodDays(p); let c=0,total=0;
@@ -124,9 +111,9 @@ function periodRate(h: Habit, history: History, p: Period): number {
   return total>0?Math.round(c/total*100):0;
 }
 function buildPeriodData(h: Habit, history: History, p: Period) {
-  if (p==="4w") return null;
+  if(p==="4w")return null;
   const days=periodDays(p), gran=(p==="3m"||p==="6m")?"week":"month";
-  if (gran==="week") {
+  if(gran==="week"){
     const weeks=Math.ceil(days/7);
     return Array.from({length:weeks},(_,w)=>{
       const wi=weeks-1-w; let c=0;
@@ -155,24 +142,47 @@ function HabitGrid({ habit, history, today, onToggle }: {
     const d=new Date(start);d.setDate(start.getDate()+i);
     const ds=toDS(d),done=isCompleted(habit,ds,history);
     const isFut=ds>today,isTod=ds===today,clickable=!!onToggle&&!isFut;
-    return(
-      <div key={ds} title={`${ds}${done?" ✓":""}`} onClick={clickable?()=>onToggle!(ds):undefined}
-        style={{width:16,height:16,borderRadius:3,background:done?habit.color:isFut?"transparent":"rgba(30,45,74,0.4)",
-          border:isTod?"2px solid #94a3b8":"0.5px solid rgba(30,45,74,0.8)",
-          boxSizing:"border-box",cursor:clickable?"pointer":"default",opacity:isFut?0.2:1,transition:"opacity 0.15s"}}/>
-    );
+    return(<div key={ds} title={`${ds}${done?" ✓":""}`} onClick={clickable?()=>onToggle!(ds):undefined}
+      style={{width:16,height:16,borderRadius:3,background:done?habit.color:isFut?"transparent":"rgba(30,45,74,0.4)",
+        border:isTod?"2px solid #94a3b8":"0.5px solid rgba(30,45,74,0.8)",
+        boxSizing:"border-box",cursor:clickable?"pointer":"default",opacity:isFut?0.2:1,transition:"opacity 0.15s"}}/>);
   });
   return(
     <div className="mt-3">
-      <div style={{...GRID_COL,marginBottom:3}}>
-        {DOW.map(d=><div key={d} style={{width:16,textAlign:"center",fontSize:9,color:"#94a3b8",opacity:0.4}}>{d}</div>)}
-      </div>
+      <div style={{...GRID_COL,marginBottom:3}}>{DOW.map(d=><div key={d} style={{width:16,textAlign:"center",fontSize:9,color:"#94a3b8",opacity:0.4}}>{d}</div>)}</div>
       <div style={GRID_COL}>{cells}</div>
       {onToggle&&<p className="text-[9px] text-dash-muted/40 mt-1">Kästchen anklicken zum Umschalten</p>}
     </div>
   );
 }
 
+/* ══════════════════════════════════════
+   SERVER SYNC HELPERS
+   Primär: /api/habits (JSON auf Server)
+   Fallback: localStorage (offline)
+══════════════════════════════════════ */
+async function loadFromServer(): Promise<{habits?:Habit[];history?:History;settings?:Partial<HabitSettings>}|null> {
+  try {
+    const r = await fetch("/api/habits", { cache:"no-store" });
+    if (!r.ok) return null;
+    const data = await r.json();
+    if (Object.keys(data).length === 0) return null;
+    return data;
+  } catch { return null; }
+}
+
+async function saveToServer(habits: Habit[], history: History, settings: HabitSettings): Promise<boolean> {
+  try {
+    const r = await fetch("/api/habits", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ habits, history, settings }),
+    });
+    return r.ok;
+  } catch { return false; }
+}
+
+/* ══ MAIN PAGE ══ */
 export default function HabitsPage() {
   const [habits,         setHabits]         = useState<Habit[]>([]);
   const [history,        setHistory]        = useState<History>({});
@@ -180,33 +190,74 @@ export default function HabitsPage() {
     ivAthleteId:"", ivApiKey:"", notifEnabled:false, notifTime:"22:00",
     autoSync:false, lastSync:null, latitude:null, longitude:null, locationName:"",
   });
-  const [dynamicTargets, setDynamicTargets] = useState<Record<string, number>>({});
-  const [dynamicInfo,    setDynamicInfo]    = useState<Record<string, string>>({});
+  const [dynamicTargets, setDynamicTargets] = useState<Record<string,number>>({});
+  const [dynamicInfo,    setDynamicInfo]    = useState<Record<string,string>>({});
   const [tab,            setTab]            = useState<Tab>("today");
   const [statsSub,       setStatsSub]       = useState<"stats"|"corr">("stats");
   const [statsPeriod,    setStatsPeriod]    = useState<Period>("4w");
   const [selDate,        setSelDate]        = useState(todayStr());
   const [form,           setForm]           = useState<(Partial<Habit>&{error?:string})|null>(null);
-  const [delId,          setDelId]          = useState<string|null>(null);
+ const [selDate, setSelDate] = useState("");
+ useEffect(() => { setSelDate(todayStr()); }, []);
   const [syncMsg,        setSyncMsg]        = useState("");
   const [loaded,         setLoaded]         = useState(false);
+  const [syncState,      setSyncState]      = useState<"idle"|"saving"|"saved"|"offline">("idle");
 
+  const saveTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  /* ── Laden: Server → localStorage Fallback ── */
   useEffect(()=>{
-    try{setHabits(JSON.parse(localStorage.getItem("ht_habits")||"null")??DEFAULTS);}catch{setHabits(DEFAULTS);}
-    try{
-      const raw=JSON.parse(localStorage.getItem("ht_history")||"{}") as Record<string,unknown>;
-      const norm:History={};
-      for(const[k,v]of Object.entries(raw))norm[k]=normalizeDay(v);
-      setHistory(norm);
-    }catch{setHistory({});}
-    try{const s=JSON.parse(localStorage.getItem("ht_settings")||"{}") as Partial<HabitSettings>;setSettings(p=>({...p,...s}));}catch{}
-    setLoaded(true);
+    const load = async () => {
+      // 1. Primär: von Server laden
+      const serverData = await loadFromServer();
+      if (serverData) {
+        if (serverData.habits)   setHabits(serverData.habits);
+        else                     setHabits(DEFAULTS);
+        if (serverData.history) {
+          const norm: History = {};
+          for (const [k,v] of Object.entries(serverData.history)) norm[k] = normalizeDay(v);
+          setHistory(norm);
+        }
+        if (serverData.settings) setSettings(p=>({...p,...serverData.settings}));
+        // Server-Daten auch in localStorage cachen
+        if (serverData.habits)   localStorage.setItem("ht_habits",   JSON.stringify(serverData.habits));
+        if (serverData.history)  localStorage.setItem("ht_history",  JSON.stringify(serverData.history));
+        if (serverData.settings) localStorage.setItem("ht_settings", JSON.stringify(serverData.settings));
+        setSyncState("saved");
+      } else {
+        // 2. Fallback: localStorage (offline oder erster Start)
+        try { setHabits(JSON.parse(localStorage.getItem("ht_habits")||"null")??DEFAULTS); } catch { setHabits(DEFAULTS); }
+        try {
+          const raw=JSON.parse(localStorage.getItem("ht_history")||"{}") as Record<string,unknown>;
+          const norm:History={};
+          for(const[k,v]of Object.entries(raw)) norm[k]=normalizeDay(v);
+          setHistory(norm);
+        } catch { setHistory({}); }
+        try { const s=JSON.parse(localStorage.getItem("ht_settings")||"{}") as Partial<HabitSettings>; setSettings(p=>({...p,...s})); } catch {}
+        setSyncState("offline");
+      }
+      setLoaded(true);
+    };
+    load();
   },[]);
 
-  useEffect(()=>{if(loaded)localStorage.setItem("ht_habits",JSON.stringify(habits));},[habits,loaded]);
-  useEffect(()=>{if(loaded)localStorage.setItem("ht_history",JSON.stringify(history));},[history,loaded]);
-  useEffect(()=>{if(loaded)localStorage.setItem("ht_settings",JSON.stringify(settings));},[settings,loaded]);
+  /* ── Speichern: localStorage sofort + Server debounced (800ms) ── */
+  useEffect(()=>{
+    if (!loaded) return;
+    // Sofort in localStorage
+    localStorage.setItem("ht_habits",   JSON.stringify(habits));
+    localStorage.setItem("ht_history",  JSON.stringify(history));
+    localStorage.setItem("ht_settings", JSON.stringify(settings));
+    // Debounced auf Server
+    clearTimeout(saveTimer.current);
+    setSyncState("saving");
+    saveTimer.current = setTimeout(async () => {
+      const ok = await saveToServer(habits, history, settings);
+      setSyncState(ok ? "saved" : "offline");
+    }, 800);
+  },[habits, history, settings, loaded]);
 
+  /* ── Notifications ── */
   useEffect(()=>{
     if(!loaded||!settings.notifEnabled||typeof Notification==="undefined"||Notification.permission!=="granted")return;
     const[hh,mm]=settings.notifTime.split(":").map(Number);
@@ -221,100 +272,51 @@ export default function HabitsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[settings.notifEnabled,settings.notifTime,settings.autoSync,loaded]);
 
-  /* ════════════════════════════════════════════════════
-     Wissenschaftsbasiertes dynamisches Hydrationsziel
-     Quellen: ACSM, Gatorade Sports Science Institute,
-     NCBI (Thermoregulationsforschung)
-  ════════════════════════════════════════════════════ */
+  /* ── Dynamisches Hydrationsziel ── */
   useEffect(()=>{
     if(!settings.ivAthleteId||!settings.ivApiKey||!loaded)return;
     const waterHabits=habits.filter(h=>h.habitType==="numeric"&&["l","liter"].includes(h.unit.toLowerCase()));
     if(!waterHabits.length)return;
-
     const run=async()=>{
-      // 1. Aktivitäten des Tages von intervals.icu holen
-      interface IvActivity { type?: string; sport_type?: string; moving_time?: number; icu_training_load?: number; training_load_score?: number; }
-      let acts: IvActivity[] = [];
-      try{
-        const r=await fetch(
-          `https://intervals.icu/api/v1/athlete/${settings.ivAthleteId}/activities?oldest=${selDate}&newest=${selDate}`,
-          {headers:{Authorization:"Basic "+btoa(`API_KEY:${settings.ivApiKey}`)}}
-        );
-        if(r.ok) acts=await r.json();
-      }catch{}
-
-      // 2. Aktuelle Temperatur holen (Open-Meteo, kostenlos, kein API-Key)
-      let tempC = 18; // Fallback: typisches Mitteleuropa-Wetter
-      let tempSource = "Schätzwert";
-      if(settings.latitude!==null && settings.longitude!==null){
-        try{
-          const wr=await fetch(
-            `https://api.open-meteo.com/v1/forecast?latitude=${settings.latitude}&longitude=${settings.longitude}&current=temperature_2m&timezone=auto`
-          );
-          if(wr.ok){
-            const wd=await wr.json();
-            if(wd.current?.temperature_2m!==undefined){
-              tempC=wd.current.temperature_2m;
-              tempSource=`${tempC.toFixed(1)}°C`;
-            }
-          }
-        }catch{}
+      interface IvAct { type?:string; sport_type?:string; moving_time?:number; icu_training_load?:number; training_load_score?:number; }
+      let acts:IvAct[]=[];
+      try{const r=await fetch(`https://intervals.icu/api/v1/athlete/${settings.ivAthleteId}/activities?oldest=${selDate}&newest=${selDate}`,{headers:{Authorization:"Basic "+btoa(`API_KEY:${settings.ivApiKey}`)}});if(r.ok)acts=await r.json();}catch{}
+      let tempC=18,tempSource="Schätzwert";
+      if(settings.latitude!==null&&settings.longitude!==null){
+        try{const wr=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${settings.latitude}&longitude=${settings.longitude}&current=temperature_2m&timezone=auto`);if(wr.ok){const wd=await wr.json();if(wd.current?.temperature_2m!==undefined){tempC=wd.current.temperature_2m;tempSource=`${tempC.toFixed(1)}°C`;}}}catch{}
       }
-
       const tempExtra=getTempExtra(tempC);
-
-      // 3. Aktivitätszuschlag berechnen
-      const newTargets: Record<string,number>={};
-      const newInfo: Record<string,string>={};
-
+      const newTargets:Record<string,number>={},newInfo:Record<string,string>={};
       for(const h of waterHabits){
-        let actExtra=0;
-        const actParts: string[]=[];
-
+        let actExtra=0;const actParts:string[]=[];
         for(const act of acts){
           const sport=act.sport_type||act.type||"Workout";
           const movingH=(act.moving_time||0)/3600;
           const load=act.icu_training_load||act.training_load_score||0;
-          const loadPerH=movingH>0?load/movingH:50;
-          const rate=getSweatRateL(sport,loadPerH);
+          const rate=getSweatRateL(sport,movingH>0?load/movingH:50);
           const extra=Math.round(rate*movingH*10)/10;
           actExtra+=extra;
-          if(extra>0){
-            const minStr=Math.round(movingH*60);
-            actParts.push(`${sport} ${minStr}min (+${extra.toFixed(1)}L, ${rate.toFixed(1)}L/h)`);
-          }
+          if(extra>0)actParts.push(`${sport} ${Math.round(movingH*60)}min (+${extra.toFixed(1)}L)`);
         }
-
         const totalExtra=Math.round((actExtra+tempExtra)*10)/10;
         if(totalExtra>0){
-          const newTarget=Math.round((h.numTarget+totalExtra)*10)/10;
-          newTargets[h.id]=newTarget;
-
-          const parts: string[]=[];
-          parts.push(`Basis: ${h.numTarget} L`);
-          actParts.forEach(p=>parts.push(`Training: ${p}`));
-          if(tempExtra>0) parts.push(`Temperatur (${tempSource}): +${tempExtra.toFixed(1)} L`);
-          parts.push(`→ Gesamt: ${newTarget} L`);
+          newTargets[h.id]=Math.round((h.numTarget+totalExtra)*10)/10;
+          const parts=[`Basis: ${h.numTarget} L`,...actParts.map(p=>`Training: ${p}`)];
+          if(tempExtra>0)parts.push(`Temperatur (${tempSource}): +${tempExtra.toFixed(1)} L`);
+          parts.push(`→ Gesamt: ${newTargets[h.id]} L`);
           newInfo[h.id]=parts.join(" · ");
         }
       }
-
-      setDynamicTargets(newTargets);
-      setDynamicInfo(newInfo);
+      setDynamicTargets(newTargets);setDynamicInfo(newInfo);
     };
-
     run();
   },[selDate,settings.ivAthleteId,settings.ivApiKey,settings.latitude,settings.longitude,habits,loaded]);
 
-  const today     = todayStr();
-  const isToday   = selDate===today;
-  const day       = useMemo(()=>normalizeDay(history[selDate]),[history,selDate]);
-  const doneCount = useMemo(()=>habits.filter(h=>isCompleted(h,selDate,history)).length,[habits,history,selDate]);
-  const pct       = habits.length?doneCount/habits.length:0;
-  const selLabel  = useMemo(()=>{
-    const d=fromDS(selDate);
-    return{dow:d.toLocaleDateString("de-DE",{weekday:"long"}),dat:d.toLocaleDateString("de-DE",{day:"numeric",month:"long",year:"numeric"})};
-  },[selDate]);
+  const today=todayStr(),isToday=selDate===today;
+  const day=useMemo(()=>normalizeDay(history[selDate]),[history,selDate]);
+  const doneCount=useMemo(()=>habits.filter(h=>isCompleted(h,selDate,history)).length,[habits,history,selDate]);
+  const pct=habits.length?doneCount/habits.length:0;
+  const selLabel=useMemo(()=>{const d=fromDS(selDate);return{dow:d.toLocaleDateString("de-DE",{weekday:"long"}),dat:d.toLocaleDateString("de-DE",{day:"numeric",month:"long",year:"numeric"});};},[selDate]);
 
   const prevDate=()=>{const d=fromDS(selDate);d.setDate(d.getDate()-1);setSelDate(toDS(d));};
   const nextDate=()=>{if(isToday)return;const d=fromDS(selDate);d.setDate(d.getDate()+1);setSelDate(toDS(d));};
@@ -322,38 +324,24 @@ export default function HabitsPage() {
   const toggle=useCallback((id:string)=>{
     setHistory(prev=>{const day=normalizeDay(prev[selDate]);const i=day.checked.indexOf(id);if(i>=0)day.checked.splice(i,1);else day.checked.push(id);return{...prev,[selDate]:day};});
   },[selDate]);
-
   const setNum=useCallback((id:string,raw:string|number)=>{
     const v=parseFloat(String(raw));
     setHistory(prev=>{const day=normalizeDay(prev[selDate]);if(isNaN(v))delete day.numeric[id];else day.numeric[id]=Math.max(0,Math.round(v*10)/10);return{...prev,[selDate]:day};});
   },[selDate]);
-
   const setMood=useCallback((val:number)=>{
     setHistory(prev=>{const day=normalizeDay(prev[selDate]);day.mood=day.mood===val?null:val;return{...prev,[selDate]:day};});
   },[selDate]);
-
   const toggleDate=useCallback((hb:Habit,date:string)=>{
-    setHistory(prev=>{
-      const day=normalizeDay(prev[date]);
-      if(hb.habitType==="checkbox"){const i=day.checked.indexOf(hb.id);if(i>=0)day.checked.splice(i,1);else day.checked.push(hb.id);}
-      else{if(day.numeric[hb.id]!==undefined)delete day.numeric[hb.id];else day.numeric[hb.id]=hb.numTarget;}
-      return{...prev,[date]:day};
-    });
+    setHistory(prev=>{const day=normalizeDay(prev[date]);if(hb.habitType==="checkbox"){const i=day.checked.indexOf(hb.id);if(i>=0)day.checked.splice(i,1);else day.checked.push(hb.id);}else{if(day.numeric[hb.id]!==undefined)delete day.numeric[hb.id];else day.numeric[hb.id]=hb.numTarget;}return{...prev,[date]:day};});
   },[]);
-
   const moveHabit=(id:string,dir:-1|1)=>{
-    setHabits(prev=>{
-      const i=prev.findIndex(h=>h.id===id),j=i+dir;
-      if(j<0||j>=prev.length)return prev;
-      const next=[...prev];[next[i],next[j]]=[next[j],next[i]];return next;
-    });
+    setHabits(prev=>{const i=prev.findIndex(h=>h.id===id),j=i+dir;if(j<0||j>=prev.length)return prev;const next=[...prev];[next[i],next[j]]=[next[j],next[i]];return next;});
   };
 
   function badge(h:Habit):string{
     if(h.goalType==="daily"){const s=calcStreak(h,history);return`🔥 ${s} ${s===1?"Tag":"Tage"} Streak`;}
     if(h.goalType==="min_per_week"){const c=calcWeekCount(h,history),ok=c>=h.goalValue;return`${c}/${h.goalValue} diese Woche${ok?" ✓":""}`;}
-    const l=calcLastDone(h,history);if(l===null)return"Noch nie ✓";
-    return`${l===0?"Heute":l+" Tage her"} ${l>=h.goalValue?"✓":"⚠"}`;
+    const l=calcLastDone(h,history);if(l===null)return"Noch nie ✓";return`${l===0?"Heute":l+" Tage her"} ${l>=h.goalValue?"✓":"⚠"}`;
   }
 
   const openAdd=()=>setForm({id:"",name:"",emoji:"💧",color:"#3b82f6",habitType:"checkbox",unit:"",numTarget:0,goalType:"daily",goalValue:3});
@@ -372,11 +360,7 @@ export default function HabitsPage() {
     const tags=habits.filter(h=>d.checked.includes(h.id)).map(h=>h.name.replace(/\s+/g,"_"));
     const nums=habits.filter(h=>h.habitType==="numeric"&&d.numeric[h.id]!==undefined).map(h=>`${h.name}: ${d.numeric[h.id]} ${h.unit}`).join(", ");
     const payload={id:date,...(tags.length>0&&{tags}),...(nums&&{comment:`Habit Tracker – ${nums}`}),...(d.mood!==null&&{motivation:d.mood})};
-    try{
-      const res=await fetch(`https://intervals.icu/api/v1/athlete/${settings.ivAthleteId}/wellness`,{method:"PUT",headers:{"Content-Type":"application/json","Authorization":"Basic "+btoa(`API_KEY:${settings.ivApiKey}`)},body:JSON.stringify(payload)});
-      if(!res.ok)throw new Error(`HTTP ${res.status}`);
-      setSettings(s=>({...s,lastSync:new Date().toISOString()}));return true;
-    }catch(e){console.error("intervals.icu:",e);return false;}
+    try{const res=await fetch(`https://intervals.icu/api/v1/athlete/${settings.ivAthleteId}/wellness`,{method:"PUT",headers:{"Content-Type":"application/json","Authorization":"Basic "+btoa(`API_KEY:${settings.ivApiKey}`)},body:JSON.stringify(payload)});if(!res.ok)throw new Error();setSettings(s=>({...s,lastSync:new Date().toISOString()}));return true;}catch{return false;}
   };
 
   const corrData=useMemo(()=>Array.from({length:12},(_,w)=>{
@@ -392,13 +376,14 @@ export default function HabitsPage() {
   };
   const exportJSON=()=>dl(`habits-${today}.json`,JSON.stringify({habits,history},null,2),"application/json");
   function dl(name:string,content:string,type:string){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([content],{type}));a.download=name;a.click();}
+  const getLocation=()=>{if(!navigator.geolocation)return;navigator.geolocation.getCurrentPosition(pos=>{setSettings(s=>({...s,latitude:Math.round(pos.coords.latitude*1000)/1000,longitude:Math.round(pos.coords.longitude*1000)/1000}));});};
 
-  const getLocation=()=>{
-    if(!navigator.geolocation)return;
-    navigator.geolocation.getCurrentPosition(pos=>{
-      setSettings(s=>({...s,latitude:Math.round(pos.coords.latitude*1000)/1000,longitude:Math.round(pos.coords.longitude*1000)/1000}));
-    });
-  };
+  const syncIndicator = {
+    idle:    "",
+    saving:  "Speichern…",
+    saved:   "✓ Gespeichert",
+    offline: "⚠ Offline (lokal)",
+  }[syncState];
 
   if(!loaded)return<div className="p-6 text-dash-muted text-sm animate-pulse">Lade Habits…</div>;
 
@@ -407,16 +392,14 @@ export default function HabitsPage() {
       <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-6 py-3 flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-sm font-semibold text-white flex items-center gap-2">
           <CheckSquare size={14} style={{color:"var(--a-600)"}}/>Habit Tracker
+          {syncIndicator && <span className={clsx("text-[10px] font-normal", syncState==="offline"?"text-yellow-400":"text-dash-muted")}>{syncIndicator}</span>}
         </h1>
         <div className="flex items-center gap-1 flex-wrap">
           {(["today","stats","manage","settings"]as const).map(t=>{
             const labels:Record<Tab,string>={today:"Heute",stats:"Verlauf",manage:"Verwalten",settings:"Einstellungen"};
-            return(
-              <button key={t} onClick={()=>{setTab(t);setForm(null);setDelId(null);if(t==="today")setSelDate(todayStr());}}
-                className={clsx("text-xs px-3 py-1.5 rounded-xl border transition-colors",tab===t?"text-white border-transparent":"text-dash-muted border-dash-border hover:text-white hover:border-indigo-500/50")}
-                style={tab===t?{backgroundColor:"var(--a-600)"}:{}}
-              >{labels[t]}</button>
-            );
+            return(<button key={t} onClick={()=>{setTab(t);setForm(null);setDelId(null);if(t==="today")setSelDate(todayStr());}}
+              className={clsx("text-xs px-3 py-1.5 rounded-xl border transition-colors",tab===t?"text-white border-transparent":"text-dash-muted border-dash-border hover:text-white hover:border-indigo-500/50")}
+              style={tab===t?{backgroundColor:"var(--a-600)"}:{}}>{labels[t]}</button>);
           })}
         </div>
       </header>
@@ -424,343 +407,195 @@ export default function HabitsPage() {
       <div className="p-6 max-w-2xl space-y-4">
 
         {/* ══ HEUTE ══ */}
-        {tab==="today"&&(
-          <>
-            <div className="flex items-center justify-between p-3 rounded-2xl border border-dash-border bg-dash-card">
-              <button onClick={prevDate} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><ChevronLeft size={15}/></button>
-              <div className="text-center cursor-pointer group relative" onClick={()=>(document.getElementById("ht-datepicker")as HTMLInputElement)?.showPicker()}>
-                <p className="text-[11px] text-dash-muted">{selLabel.dow}{isToday&&<span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300">Heute</span>}</p>
-                <p className="text-sm font-medium text-white group-hover:text-indigo-300 transition-colors">{selLabel.dat} <span className="text-[10px] text-dash-muted/50">▾</span></p>
-                <input id="ht-datepicker" type="date" value={selDate} max={today} onChange={e=>{if(e.target.value)setSelDate(e.target.value);}} className="sr-only"/>
-              </div>
-              <button onClick={nextDate} disabled={isToday} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"><ChevronRight size={15}/></button>
+        {tab==="today"&&(<>
+          <div className="flex items-center justify-between p-3 rounded-2xl border border-dash-border bg-dash-card">
+            <button onClick={prevDate} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><ChevronLeft size={15}/></button>
+            <div className="text-center cursor-pointer group relative" onClick={()=>(document.getElementById("ht-datepicker")as HTMLInputElement)?.showPicker()}>
+              <p className="text-[11px] text-dash-muted">{selLabel.dow}{isToday&&<span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300">Heute</span>}</p>
+              <p className="text-sm font-medium text-white group-hover:text-indigo-300 transition-colors">{selLabel.dat} <span className="text-[10px] text-dash-muted/50">▾</span></p>
+              <input id="ht-datepicker" type="date" value={selDate} max={today} onChange={e=>{if(e.target.value)setSelDate(e.target.value);}} className="sr-only"/>
             </div>
+            <button onClick={nextDate} disabled={isToday} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"><ChevronRight size={15}/></button>
+          </div>
 
-            <div className="flex items-center gap-2 p-3 rounded-2xl border border-dash-border bg-dash-card flex-wrap">
-              <span className="text-[11px] text-dash-muted mr-1">Stimmung</span>
-              {MOOD_E.map((e,i)=>(
-                <button key={i} onClick={()=>setMood(i+1)} className={clsx("text-xl rounded-lg p-1 transition-all",day.mood===i+1?"scale-110 bg-white/10":"opacity-50 hover:opacity-100")} title={MOOD_L[i]}>{e}</button>
-              ))}
-              {day.mood&&<span className="text-[11px] text-dash-muted ml-1">{MOOD_L[day.mood-1]}</span>}
-            </div>
+          <div className="flex items-center gap-2 p-3 rounded-2xl border border-dash-border bg-dash-card flex-wrap">
+            <span className="text-[11px] text-dash-muted mr-1">Stimmung</span>
+            {MOOD_E.map((e,i)=>(<button key={i} onClick={()=>setMood(i+1)} className={clsx("text-xl rounded-lg p-1 transition-all",day.mood===i+1?"scale-110 bg-white/10":"opacity-50 hover:opacity-100")} title={MOOD_L[i]}>{e}</button>))}
+            {day.mood&&<span className="text-[11px] text-dash-muted ml-1">{MOOD_L[day.mood-1]}</span>}
+          </div>
 
-            {habits.length>0&&(
-              <div className="flex items-center gap-3">
-                <div className="flex-1 h-1.5 rounded-full bg-dash-card overflow-hidden border border-dash-border">
-                  <div className="h-full rounded-full bg-indigo-500 transition-all duration-300" style={{width:`${Math.round(pct*100)}%`}}/>
-                </div>
-                <span className="text-xs text-dash-muted tabular-nums">{doneCount}/{habits.length}</span>
-              </div>
-            )}
+          {habits.length>0&&(<div className="flex items-center gap-3"><div className="flex-1 h-1.5 rounded-full bg-dash-card overflow-hidden border border-dash-border"><div className="h-full rounded-full bg-indigo-500 transition-all duration-300" style={{width:`${Math.round(pct*100)}%`}}/></div><span className="text-xs text-dash-muted tabular-nums">{doneCount}/{habits.length}</span></div>)}
+          {habits.length===0&&<div className="rounded-2xl border border-dashed border-dash-border p-10 text-center text-dash-muted text-sm">Noch keine Habits.<br/>Im Tab <strong className="text-white">Verwalten</strong> anfangen.</div>}
 
-            {habits.length===0&&<div className="rounded-2xl border border-dashed border-dash-border p-10 text-center text-dash-muted text-sm">Noch keine Habits.<br/>Im Tab <strong className="text-white">Verwalten</strong> anfangen.</div>}
-
-            {habits.map(hb=>{
-              const done=isCompleted(hb,selDate,history);
-              const numVal=hb.habitType==="numeric"?(day.numeric[hb.id]??null):null;
-              const isLUnit=["l","liter"].includes(hb.unit.toLowerCase());
-              const effectiveTarget=dynamicTargets[hb.id]??hb.numTarget;
-              const isDynamic=!!dynamicTargets[hb.id];
-              const infoText=dynamicInfo[hb.id]??"";
-
-              return(
-                <div key={hb.id}
-                  className={clsx("flex items-start gap-3 p-3.5 rounded-2xl border bg-dash-card transition-colors",hb.habitType==="checkbox"&&"cursor-pointer select-none items-center")}
-                  style={{borderColor:done?hb.color+"60":undefined}}
-                  onClick={hb.habitType==="checkbox"?()=>toggle(hb.id):undefined}
-                  role={hb.habitType==="checkbox"?"checkbox":undefined}
-                  aria-checked={hb.habitType==="checkbox"?done:undefined}
-                  tabIndex={hb.habitType==="checkbox"?0:undefined}
-                  onKeyDown={hb.habitType==="checkbox"?e=>{if(e.key==="Enter"||e.key===" ")toggle(hb.id);}:undefined}
-                >
-                  <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-base transition-all mt-0.5" style={{border:`2px solid ${hb.color}`,background:done?hb.color:"transparent",color:done?"#fff":hb.color}}>
-                    {done?"✓":hb.emoji}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-white">{hb.name}</p>
-                    <p className="text-[11px] text-dash-muted">{badge(hb)}</p>
-                  </div>
-
-                  {hb.habitType==="numeric"&&(
-                    <div className="flex flex-col items-end gap-1.5 flex-shrink-0" onClick={e=>e.stopPropagation()}>
-                      <div className="flex items-center gap-1.5">
-                        <button onClick={()=>setNum(hb.id,Math.max(0,Math.round(((numVal??0)*10-5))/10))} className="w-7 h-7 rounded-lg border border-dash-border text-dash-muted hover:text-white text-base flex items-center justify-center transition-colors">−</button>
-                        <input type="number" step="0.5" min="0" value={numVal??""} placeholder="0"
-                          onChange={e=>setNum(hb.id,e.target.value)}
-                          onClick={e=>(e.target as HTMLInputElement).select()}
-                          className="w-12 text-center text-sm bg-dash-bg border border-dash-border rounded-lg py-1 text-white tabular-nums focus:outline-none focus:border-indigo-500 transition-colors"/>
-                        <button onClick={()=>setNum(hb.id,Math.round(((numVal??0)*10+5))/10)} className="w-7 h-7 rounded-lg border border-dash-border text-dash-muted hover:text-white text-base flex items-center justify-center transition-colors">+</button>
-                        <span className="text-[11px] text-dash-muted whitespace-nowrap">
-                          /{effectiveTarget} {hb.unit}
-                          {isDynamic&&(
-                            <span className="ml-1 text-indigo-300 cursor-help relative group/tip" title={infoText}>
-                              ⚡
-                              {/* Tooltip */}
-                              <span className="absolute right-0 bottom-5 z-10 hidden group-hover/tip:block w-64 bg-[#131929] border border-dash-border rounded-xl p-2 text-[10px] text-dash-muted leading-relaxed shadow-xl">
-                                {infoText.split(" · ").map((part,i)=><span key={i} className="block">{part}</span>)}
-                              </span>
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                      {/* Gefäß-Schnellbuttons */}
-                      {isLUnit&&(
-                        <div className="flex gap-1">
-                          {VESSEL_SIZES.map(amt=>(
-                            <button key={amt}
-                              onClick={()=>setNum(hb.id,Math.round(((numVal??0)+amt)*10)/10)}
-                              className="text-[10px] px-2 py-0.5 rounded-lg border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/40 transition-colors">
-                              +{amt*1000}ml
-                            </button>
-                          ))}
-                        </div>
-                      )}
+          {habits.map(hb=>{
+            const done=isCompleted(hb,selDate,history),numVal=hb.habitType==="numeric"?(day.numeric[hb.id]??null):null;
+            const isLUnit=["l","liter"].includes(hb.unit.toLowerCase());
+            const effectiveTarget=dynamicTargets[hb.id]??hb.numTarget,isDynamic=!!dynamicTargets[hb.id];
+            return(
+              <div key={hb.id}
+                className={clsx("flex items-start gap-3 p-3.5 rounded-2xl border bg-dash-card transition-colors",hb.habitType==="checkbox"&&"cursor-pointer select-none items-center")}
+                style={{borderColor:done?hb.color+"60":undefined}}
+                onClick={hb.habitType==="checkbox"?()=>toggle(hb.id):undefined}
+                role={hb.habitType==="checkbox"?"checkbox":undefined} aria-checked={hb.habitType==="checkbox"?done:undefined}
+                tabIndex={hb.habitType==="checkbox"?0:undefined}
+                onKeyDown={hb.habitType==="checkbox"?e=>{if(e.key==="Enter"||e.key===" ")toggle(hb.id);}:undefined}>
+                <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-base transition-all mt-0.5" style={{border:`2px solid ${hb.color}`,background:done?hb.color:"transparent",color:done?"#fff":hb.color}}>{done?"✓":hb.emoji}</div>
+                <div className="flex-1 min-w-0"><p className="text-sm font-medium text-white">{hb.name}</p><p className="text-[11px] text-dash-muted">{badge(hb)}</p></div>
+                {hb.habitType==="numeric"&&(
+                  <div className="flex flex-col items-end gap-1.5 flex-shrink-0" onClick={e=>e.stopPropagation()}>
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={()=>setNum(hb.id,Math.max(0,Math.round(((numVal??0)*10-5))/10))} className="w-7 h-7 rounded-lg border border-dash-border text-dash-muted hover:text-white text-base flex items-center justify-center transition-colors">−</button>
+                      <input type="number" step="0.5" min="0" value={numVal??""} placeholder="0" onChange={e=>setNum(hb.id,e.target.value)} onClick={e=>(e.target as HTMLInputElement).select()} className="w-12 text-center text-sm bg-dash-bg border border-dash-border rounded-lg py-1 text-white tabular-nums focus:outline-none focus:border-indigo-500 transition-colors"/>
+                      <button onClick={()=>setNum(hb.id,Math.round(((numVal??0)*10+5))/10)} className="w-7 h-7 rounded-lg border border-dash-border text-dash-muted hover:text-white text-base flex items-center justify-center transition-colors">+</button>
+                      <span className="text-[11px] text-dash-muted whitespace-nowrap">
+                        /{effectiveTarget} {hb.unit}
+                        {isDynamic&&<span className="ml-1 text-indigo-300 cursor-help relative group/tip" title={dynamicInfo[hb.id]??""}> ⚡<span className="absolute right-0 bottom-5 z-10 hidden group-hover/tip:block w-64 bg-[#131929] border border-dash-border rounded-xl p-2 text-[10px] text-dash-muted leading-relaxed shadow-xl">{(dynamicInfo[hb.id]??"").split(" · ").map((p,i)=><span key={i} className="block">{p}</span>)}</span></span>}
+                      </span>
                     </div>
-                  )}
-                </div>
-              );
-            })}
-          </>
-        )}
-
-        {/* ══ VERLAUF ══ */}
-        {tab==="stats"&&(
-          <>
-            <div className="flex gap-2 flex-wrap">
-              {(["stats","corr"]as const).map(s=>(
-                <button key={s} onClick={()=>setStatsSub(s)}
-                  className={clsx("text-xs px-3 py-1.5 rounded-xl border transition-colors",statsSub===s?"text-white border-transparent":"text-dash-muted border-dash-border hover:text-white")}
-                  style={statsSub===s?{backgroundColor:"var(--a-600)"}:{}}
-                >{s==="stats"?"Statistiken":"Korrelation"}</button>
-              ))}
-            </div>
-
-            {statsSub==="stats"&&(
-              <>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[11px] text-dash-muted">Zeitraum:</span>
-                  {PERIODS.map(p=>(
-                    <button key={p.id} onClick={()=>setStatsPeriod(p.id)}
-                      className={clsx("text-xs px-3 py-1.5 rounded-xl border transition-colors",statsPeriod===p.id?"text-white border-transparent":"text-dash-muted border-dash-border hover:text-white")}
-                      style={statsPeriod===p.id?{backgroundColor:"var(--a-600)"}:{}}
-                    >{p.label}</button>
-                  ))}
-                </div>
-
-                {habits.length===0&&<div className="rounded-2xl border border-dashed border-dash-border p-10 text-center text-dash-muted text-sm">Noch keine Habits vorhanden.</div>}
-
-                {habits.map(hb=>{
-                  const rate=periodRate(hb,history,statsPeriod);
-                  const streak=calcStreak(hb,history),wc=calcWeekCount(hb,history),ld=calcLastDone(hb,history);
-                  const chartData=buildPeriodData(hb,history,statsPeriod);
-                  let avgNum:number|null=null;
-                  if(hb.habitType==="numeric"){
-                    const days=periodDays(statsPeriod);let sum=0,cnt=0;
-                    for(let i=0;i<days;i++){const v=normalizeDay(history[daysAgo(i)]).numeric[hb.id];if(v!==undefined){sum+=v;cnt++;}}
-                    avgNum=cnt>0?Math.round(sum/cnt*10)/10:null;
-                  }
-                  const periodLabel=PERIODS.find(p=>p.id===statsPeriod)?.label;
-                  return(
-                    <div key={hb.id} className="rounded-2xl border border-dash-border bg-dash-card p-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0" style={{background:hb.color+"22"}}>{hb.emoji}</div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-white">{hb.name}</p>
-                          <p className="text-[11px] text-dash-muted">{hb.goalType==="daily"?"Täglich":hb.goalType==="min_per_week"?`Min. ${hb.goalValue}×/Woche`:`Max. alle ${hb.goalValue} Tage`}</p>
-                        </div>
-                        <div className="text-right flex-shrink-0">
-                          <p className="text-2xl font-bold tabular-nums" style={{color:hb.color}}>{rate}%</p>
-                          <p className="text-[10px] text-dash-muted">{periodLabel}</p>
-                        </div>
-                      </div>
-                      {statsPeriod==="4w"?(
-                        <HabitGrid habit={hb} history={history} today={today} onToggle={date=>toggleDate(hb,date)}/>
-                      ):(
-                        <div className="mt-3" style={{height:100}}>
-                          <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={chartData||[]} margin={{top:0,right:0,left:-32,bottom:0}}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#1e2d4a"/>
-                              <XAxis dataKey="label" tick={TICK_STYLE} tickLine={false} axisLine={false} interval="preserveStartEnd"/>
-                              <YAxis tick={TICK_STYLE} tickLine={false} axisLine={false} domain={[0,100]} tickFormatter={v=>`${v}%`}/>
-                              <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{color:"#e2e8f0"}} formatter={(v:unknown)=>[`${v}%`,"Erfüllt"]}/>
-                              <Bar dataKey="value" fill={hb.color} radius={[2,2,0,0]} opacity={0.85}/>
-                            </BarChart>
-                          </ResponsiveContainer>
-                        </div>
-                      )}
-                      <div className="flex gap-5 mt-3 pt-3 border-t border-dash-border flex-wrap">
-                        {hb.goalType==="daily"&&<div><p className="text-lg font-bold tabular-nums text-white">{streak}</p><p className="text-[10px] text-dash-muted">Streak</p></div>}
-                        {hb.goalType==="min_per_week"&&<div><p className="text-lg font-bold tabular-nums" style={{color:wc>=hb.goalValue?"#10b981":"#94a3b8"}}>{wc}/{hb.goalValue}</p><p className="text-[10px] text-dash-muted">diese Woche</p></div>}
-                        {hb.goalType==="max_per_days"&&ld!==null&&<div><p className="text-lg font-bold tabular-nums" style={{color:ld>=hb.goalValue?"#10b981":"#ef4444"}}>{ld}</p><p className="text-[10px] text-dash-muted">Tage seit letztem</p></div>}
-                        <div><p className="text-lg font-bold tabular-nums text-white">{Math.round(periodDays(statsPeriod)*rate/100)}</p><p className="text-[10px] text-dash-muted">von {periodDays(statsPeriod)} Tagen</p></div>
-                        {avgNum!==null&&<div><p className="text-lg font-bold tabular-nums text-white">{avgNum}</p><p className="text-[10px] text-dash-muted">⌀ {hb.unit}/Tag</p></div>}
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {(()=>{
-                  const days28=Array.from({length:28},(_,i)=>({ds:daysAgo(27-i),m:normalizeDay(history[daysAgo(27-i)]).mood}));
-                  if(!days28.some(x=>x.m!==null))return null;
-                  return(
-                    <div className="rounded-2xl border border-dash-border bg-dash-card p-4">
-                      <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">Stimmung – letzte 28 Tage</p>
-                      <div style={{...GRID_COL,marginBottom:3}}>{DOW.map(d=><div key={d} style={{width:16,textAlign:"center",fontSize:9,color:"#94a3b8",opacity:0.4}}>{d}</div>)}</div>
-                      <div style={GRID_COL}>{days28.map(({ds,m})=><div key={ds} title={`${ds}: ${m?MOOD_L[m-1]:"–"}`} style={{width:16,height:16,borderRadius:4,background:m?MOOD_COLORS[m]:"rgba(30,45,74,0.4)",opacity:m?1:0.4,border:"0.5px solid rgba(30,45,74,0.8)"}}/>)}</div>
-                      <div className="flex flex-wrap gap-3 mt-3">{MOOD_E.map((e,i)=><span key={i} className="text-[10px] text-dash-muted">{e} {MOOD_L[i]}</span>)}</div>
-                    </div>
-                  );
-                })()}
-                <p className="text-[10px] text-dash-muted text-center">Heute mit Rahmen markiert · Kästchen im 4-Wochen-Raster anklickbar</p>
-              </>
-            )}
-
-            {statsSub==="corr"&&(
-              <>
-                <div className="rounded-2xl border border-dash-border bg-dash-card p-4">
-                  <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-4">Wochentag-Muster (12 Wochen)</p>
-                  <div className="flex gap-2 mb-2 ml-24">{DOW.map(d=><div key={d} className="w-5 text-[9px] text-dash-muted/40 text-center">{d}</div>)}</div>
-                  {habits.map(hb=>{
-                    const currDow=(new Date().getDay()+6)%7;
-                    return(
-                      <div key={hb.id} className="flex items-center gap-2 mb-2">
-                        <span className="text-[11px] text-dash-muted w-24 truncate" title={hb.name}>{hb.name}</span>
-                        <div className="flex gap-1">
-                          {DOW.map((_,di)=>{
-                            let done=0,total=0;
-                            for(let w=0;w<12;w++){const back=(currDow-di+7)%7+w*7;const ds=daysAgo(back);if(ds<=today){total++;if(isCompleted(hb,ds,history))done++;}}
-                            const p=total>0?done/total:0;
-                            return<div key={di} className="w-5 h-5 rounded-sm" style={{background:hb.color,opacity:0.08+p*0.92,border:"0.5px solid rgba(30,45,74,0.8)"}} title={`${DOW[di]}: ${Math.round(p*100)}%`}/>;
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="rounded-2xl border border-dash-border bg-dash-card p-4">
-                  <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-4">12-Wochen-Verlauf (Erfüllungsrate)</p>
-                  <ResponsiveContainer width="100%" height={220}>
-                    <LineChart data={corrData} margin={{top:4,right:8,left:0,bottom:0}}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e2d4a"/>
-                      <XAxis dataKey="label" tick={TICK_STYLE} tickLine={false} axisLine={false}/>
-                      <YAxis tick={TICK_STYLE} tickLine={false} axisLine={false} domain={[0,100]} tickFormatter={v=>`${v}%`} width={42}/>
-                      <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{color:"#e2e8f0"}} formatter={(v:unknown)=>[`${v}%`]}/>
-                      {habits.map(h=><Line key={h.id} type="monotone" dataKey={h.name} stroke={h.color} strokeWidth={2} dot={false} connectNulls/>)}
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="rounded-2xl border border-yellow-500/20 bg-yellow-500/5 p-3 text-xs text-yellow-200/70 leading-relaxed">
-                  💡 <strong className="text-yellow-200/90">intervals.icu-Korrelation:</strong> Mit API-Key wird hier zukünftig die Lag-1-Korrelation von Habits zu HRV und Readiness angezeigt.
-                </div>
-              </>
-            )}
-          </>
-        )}
-
-        {/* ══ VERWALTEN ══ */}
-        {tab==="manage"&&(
-          <>
-            {habits.length===0&&!form&&<div className="rounded-2xl border border-dashed border-dash-border p-10 text-center text-dash-muted text-sm">Noch keine Habits.</div>}
-            {habits.map((hb,idx)=>{
-              if(delId===hb.id)return(
-                <div key={hb.id} className="flex items-center gap-3 p-3 rounded-2xl border border-red-500/30 bg-dash-card text-sm flex-wrap">
-                  <span className="flex-1 text-dash-muted min-w-0">„{hb.name}" löschen? (Verlauf bleibt erhalten)</span>
-                  <button onClick={()=>{setHabits(p=>p.filter(x=>x.id!==hb.id));setDelId(null);}} className="text-xs px-3 py-1.5 rounded-xl text-red-400 border border-red-500/30 hover:bg-red-500/10 transition-colors">Löschen</button>
-                  <button onClick={()=>setDelId(null)} className="text-xs px-3 py-1.5 rounded-xl text-dash-muted border border-dash-border hover:text-white transition-colors">Abbrechen</button>
-                </div>
-              );
-              return(
-                <div key={hb.id} className="flex items-center gap-3 p-3 rounded-2xl border border-dash-border bg-dash-card">
-                  <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-base" style={{background:hb.color+"22"}}>{hb.emoji}</div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-white">{hb.name}</p>
-                    <p className="text-[11px] text-dash-muted">{hb.habitType==="numeric"?`Numerisch · ${hb.numTarget} ${hb.unit} · `:""}Ziel: {hb.goalType==="daily"?"täglich":hb.goalType==="min_per_week"?`${hb.goalValue}×/Woche`:`alle ${hb.goalValue} Tage`}</p>
+                    {isLUnit&&(<div className="flex gap-1">{VESSEL_SIZES.map(amt=>(<button key={amt} onClick={()=>setNum(hb.id,Math.round(((numVal??0)+amt)*10)/10)} className="text-[10px] px-2 py-0.5 rounded-lg border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/40 transition-colors">+{amt*1000}ml</button>))}</div>)}
                   </div>
-                  <button onClick={()=>moveHabit(hb.id,-1)} disabled={idx===0} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors disabled:opacity-20"><ChevronUp size={14}/></button>
-                  <button onClick={()=>moveHabit(hb.id,1)} disabled={idx===habits.length-1} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors disabled:opacity-20"><ChevronDown size={14}/></button>
-                  <button onClick={()=>openEdit(hb)} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors"><Pencil size={14}/></button>
-                  <button onClick={()=>{setDelId(hb.id);setForm(null);}} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-red-400 transition-colors"><Trash2 size={14}/></button>
-                </div>
-              );
-            })}
-            {!form&&<button onClick={openAdd} className="w-full py-3 rounded-2xl border border-dashed border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/40 transition-colors flex items-center justify-center gap-2 text-sm"><Plus size={15}/> Habit hinzufügen</button>}
-            {form&&(
-              <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
-                <p className="text-sm font-medium text-white">{form.id?"Habit bearbeiten":"Neuer Habit"}</p>
-                <div><label className="text-[11px] text-dash-muted block mb-1">Name</label><input type="text" value={form.name||""} onChange={e=>setForm(f=>f?{...f,name:e.target.value,error:""}:null)} placeholder="z. B. Morgensport" className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
-                <div><label className="text-[11px] text-dash-muted block mb-1">Typ</label><div className="flex gap-4">{(["checkbox","numeric"]as const).map(t=><label key={t} className="flex items-center gap-2 text-sm text-dash-muted cursor-pointer"><input type="radio" name="htype" checked={form.habitType===t} onChange={()=>setForm(f=>f?{...f,habitType:t}:null)}/> {t==="checkbox"?"Checkbox":"Numerisch"}</label>)}</div></div>
-                {form.habitType==="numeric"&&<div className="grid grid-cols-2 gap-3"><div><label className="text-[11px] text-dash-muted block mb-1">Einheit</label><input type="text" value={form.unit||""} onChange={e=>setForm(f=>f?{...f,unit:e.target.value}:null)} placeholder="L, km, h …" className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div><div><label className="text-[11px] text-dash-muted block mb-1">Zielwert</label><input type="number" min="0" step="0.5" value={form.numTarget||0} onChange={e=>setForm(f=>f?{...f,numTarget:parseFloat(e.target.value)||0}:null)} className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div></div>}
-                <div><label className="text-[11px] text-dash-muted block mb-1">Icon</label><div className="flex flex-wrap gap-1">{EMOJIS.map(e=><button key={e} type="button" onClick={()=>setForm(f=>f?{...f,emoji:e}:null)} className={clsx("w-8 h-8 rounded-lg text-lg flex items-center justify-center transition-all",form.emoji===e?"bg-white/15 ring-1 ring-indigo-400":"hover:bg-white/10")}>{e}</button>)}</div></div>
-                <div><label className="text-[11px] text-dash-muted block mb-1">Farbe</label><div className="flex gap-2 flex-wrap">{COLORS.map(c=><button key={c} type="button" onClick={()=>setForm(f=>f?{...f,color:c}:null)} className="w-6 h-6 rounded-full transition-all" style={{background:c,outline:form.color===c?"2px solid white":"2px solid transparent",outlineOffset:2}}/>)}</div></div>
-                <div><label className="text-[11px] text-dash-muted block mb-1">Zieltyp</label><select value={form.goalType||"daily"} onChange={e=>setForm(f=>f?{...f,goalType:e.target.value as GoalType}:null)} className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"><option value="daily">Täglich</option><option value="min_per_week">Mindestens X mal pro Woche</option><option value="max_per_days">Höchstens alle X Tage</option></select></div>
-                {form.goalType!=="daily"&&<div><label className="text-[11px] text-dash-muted block mb-1">{form.goalType==="min_per_week"?"Anzahl pro Woche":"Intervall in Tagen"}</label><input type="number" min="1" max={form.goalType==="min_per_week"?7:365} value={form.goalValue||1} onChange={e=>setForm(f=>f?{...f,goalValue:Math.max(1,parseInt(e.target.value)||1)}:null)} className="w-24 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>}
-                {form.error&&<p className="text-xs text-red-400">{form.error}</p>}
-                <div className="flex gap-2 pt-1"><button onClick={saveForm} className="flex-1 py-2 text-sm font-medium rounded-xl text-white transition-colors" style={{backgroundColor:"var(--a-600)"}}>{form.id?"Speichern":"Hinzufügen"}</button><button onClick={()=>setForm(null)} className="px-4 py-2 text-sm text-dash-muted border border-dash-border rounded-xl hover:text-white transition-colors">Abbrechen</button></div>
-              </div>
-            )}
-          </>
-        )}
-
-        {/* ══ EINSTELLUNGEN ══ */}
-        {tab==="settings"&&(
-          <>
-            <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
-              <p className="text-sm font-semibold text-white">intervals.icu Wellness-Sync</p>
-              <p className="text-xs text-dash-muted leading-relaxed">
-                Habits werden als <strong className="text-white">Tags + Kommentar</strong> eingetragen. Mood → <code className="text-indigo-300 text-[10px]">motivation</code>.
-                Mit API-Key wird das Wasserziel täglich neu berechnet: sportartspezifische Schweißrate (0,35–1,4 L/h je nach Sportart + Intensität) + Temperaturzuschlag (Open-Meteo).
-              </p>
-              <div><label className="text-[11px] text-dash-muted block mb-1">Athleten-ID</label><input type="text" value={settings.ivAthleteId} onChange={e=>setSettings(s=>({...s,ivAthleteId:e.target.value}))} placeholder="i12345" className="w-40 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
-              <div><label className="text-[11px] text-dash-muted block mb-1">API-Key</label><input type="password" value={settings.ivApiKey} onChange={e=>setSettings(s=>({...s,ivApiKey:e.target.value}))} placeholder="••••••••" className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <button onClick={async()=>{setSyncMsg("Synchronisiere…");const ok=await doSync(today);setSyncMsg(ok?`✓ Sync: ${new Date().toLocaleString("de-DE")}`:"✗ Fehlgeschlagen");}} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><RefreshCw size={12}/> Jetzt synchronisieren</button>
-                <label className="flex items-center gap-2 text-xs text-dash-muted cursor-pointer"><input type="checkbox" checked={settings.autoSync} onChange={e=>setSettings(s=>({...s,autoSync:e.target.checked}))}/>Täglich um <input type="time" value={settings.notifTime} onChange={e=>setSettings(s=>({...s,notifTime:e.target.value}))} className="w-24 px-2 py-1 text-xs bg-dash-bg border border-dash-border rounded-lg text-white focus:outline-none focus:border-indigo-500"/> Uhr</label>
-              </div>
-              {syncMsg&&<p className="text-[11px] text-dash-muted">{syncMsg}</p>}
-              {settings.lastSync&&<p className="text-[11px] text-dash-muted/50">Letzter Sync: {new Date(settings.lastSync).toLocaleString("de-DE")}</p>}
-            </div>
-
-            {/* Standort für Wetter */}
-            <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
-              <p className="text-sm font-semibold text-white">Standort (Temperaturanpassung)</p>
-              <p className="text-xs text-dash-muted leading-relaxed">
-                Wird für die Wetterdaten via Open-Meteo genutzt, um das Wasserziel temperaturabhängig anzupassen.
-                <br/>Formel: &lt;20°C: +0 L · 20–25°C: +0,3 L · 25–30°C: +0,6 L · 30–35°C: +0,9 L · &gt;35°C: +1,2 L
-              </p>
-              <div>
-                <label className="text-[11px] text-dash-muted block mb-1">Ortsname (zur Anzeige)</label>
-                <input type="text" value={settings.locationName} onChange={e=>setSettings(s=>({...s,locationName:e.target.value}))} placeholder="z. B. Ennigerloh" className="w-48 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/>
-              </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <button onClick={getLocation} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors">
-                  <MapPin size={12}/> Standort automatisch ermitteln
-                </button>
-                {settings.latitude!==null&&(
-                  <span className="text-[11px] text-dash-muted">✓ {settings.latitude?.toFixed(3)}, {settings.longitude?.toFixed(3)}</span>
                 )}
               </div>
-              {settings.latitude===null&&(
-                <p className="text-[11px] text-yellow-200/60">Ohne Standort wird eine Standardtemperatur von 18°C angenommen.</p>
-              )}
-            </div>
+            );
+          })}
+        </>)}
 
-            <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
-              <p className="text-sm font-semibold text-white">Benachrichtigungen</p>
-              <p className="text-xs text-dash-muted">Erinnerung wenn Habits noch nicht erledigt sind. Seite muss dafür offen sein.</p>
-              {typeof window!=="undefined"&&"Notification" in window&&(
-                Notification.permission==="granted"?(<label className="flex items-center gap-2 text-xs text-dash-muted cursor-pointer flex-wrap"><input type="checkbox" checked={settings.notifEnabled} onChange={e=>setSettings(s=>({...s,notifEnabled:e.target.checked}))}/>Aktiv um <input type="time" value={settings.notifTime} onChange={e=>setSettings(s=>({...s,notifTime:e.target.value}))} className="w-24 px-2 py-1 text-xs bg-dash-bg border border-dash-border rounded-lg text-white focus:outline-none focus:border-indigo-500"/></label>):
-                Notification.permission==="denied"?(<p className="text-xs text-red-400">Im Browser blockiert.</p>):
-                (<button onClick={async()=>{const p=await Notification.requestPermission();if(p==="granted")setSettings(s=>({...s,notifEnabled:true}));}} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><Bell size={12}/> Benachrichtigungen erlauben</button>)
-              )}
+        {/* ══ VERLAUF ══ */}
+        {tab==="stats"&&(<>
+          <div className="flex gap-2 flex-wrap">
+            {(["stats","corr"]as const).map(s=>(<button key={s} onClick={()=>setStatsSub(s)} className={clsx("text-xs px-3 py-1.5 rounded-xl border transition-colors",statsSub===s?"text-white border-transparent":"text-dash-muted border-dash-border hover:text-white")} style={statsSub===s?{backgroundColor:"var(--a-600)"}:{}}>{s==="stats"?"Statistiken":"Korrelation"}</button>))}
+          </div>
+          {statsSub==="stats"&&(<>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] text-dash-muted">Zeitraum:</span>
+              {PERIODS.map(p=>(<button key={p.id} onClick={()=>setStatsPeriod(p.id)} className={clsx("text-xs px-3 py-1.5 rounded-xl border transition-colors",statsPeriod===p.id?"text-white border-transparent":"text-dash-muted border-dash-border hover:text-white")} style={statsPeriod===p.id?{backgroundColor:"var(--a-600)"}:{}}>{p.label}</button>))}
             </div>
-            <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
-              <p className="text-sm font-semibold text-white">Daten-Export (3-2-1 Backup)</p>
-              <p className="text-xs text-dash-muted">Monatlich exportieren und in Paperless-ngx ablegen.</p>
-              <div className="flex gap-2 flex-wrap"><button onClick={exportCSV} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><Download size={12}/> CSV</button><button onClick={exportJSON} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><Download size={12}/> JSON</button></div>
-              <div><label className="text-[11px] text-dash-muted block mb-1">JSON importieren <strong>(überschreibt alle Daten!)</strong></label><input type="file" accept=".json" onChange={e=>{const file=e.target.files?.[0];if(!file)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target?.result as string);if(d.habits)setHabits(d.habits);if(d.history){const norm:History={};for(const[k,v]of Object.entries(d.history))norm[k]=normalizeDay(v);setHistory(norm);}e.target.value="";}catch{alert("Ungültige JSON-Datei.");}};r.readAsText(file);}} className="text-xs text-dash-muted"/></div>
+            {habits.length===0&&<div className="rounded-2xl border border-dashed border-dash-border p-10 text-center text-dash-muted text-sm">Noch keine Habits vorhanden.</div>}
+            {habits.map(hb=>{
+              const rate=periodRate(hb,history,statsPeriod),streak=calcStreak(hb,history),wc=calcWeekCount(hb,history),ld=calcLastDone(hb,history);
+              const chartData=buildPeriodData(hb,history,statsPeriod);
+              let avgNum:number|null=null;
+              if(hb.habitType==="numeric"){const days=periodDays(statsPeriod);let sum=0,cnt=0;for(let i=0;i<days;i++){const v=normalizeDay(history[daysAgo(i)]).numeric[hb.id];if(v!==undefined){sum+=v;cnt++;}}avgNum=cnt>0?Math.round(sum/cnt*10)/10:null;}
+              return(
+                <div key={hb.id} className="rounded-2xl border border-dash-border bg-dash-card p-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0" style={{background:hb.color+"22"}}>{hb.emoji}</div>
+                    <div className="flex-1 min-w-0"><p className="text-sm font-medium text-white">{hb.name}</p><p className="text-[11px] text-dash-muted">{hb.goalType==="daily"?"Täglich":hb.goalType==="min_per_week"?`Min. ${hb.goalValue}×/Woche`:`Max. alle ${hb.goalValue} Tage`}</p></div>
+                    <div className="text-right flex-shrink-0"><p className="text-2xl font-bold tabular-nums" style={{color:hb.color}}>{rate}%</p><p className="text-[10px] text-dash-muted">{PERIODS.find(p=>p.id===statsPeriod)?.label}</p></div>
+                  </div>
+                  {statsPeriod==="4w"?(<HabitGrid habit={hb} history={history} today={today} onToggle={date=>toggleDate(hb,date)}/>):(
+                    <div className="mt-3" style={{height:100}}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={chartData||[]} margin={{top:0,right:0,left:-32,bottom:0}}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#1e2d4a"/><XAxis dataKey="label" tick={TICK_STYLE} tickLine={false} axisLine={false} interval="preserveStartEnd"/>
+                          <YAxis tick={TICK_STYLE} tickLine={false} axisLine={false} domain={[0,100]} tickFormatter={v=>`${v}%`}/>
+                          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{color:"#e2e8f0"}} formatter={(v:unknown)=>[`${v}%`,"Erfüllt"]}/>
+                          <Bar dataKey="value" fill={hb.color} radius={[2,2,0,0]} opacity={0.85}/>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                  <div className="flex gap-5 mt-3 pt-3 border-t border-dash-border flex-wrap">
+                    {hb.goalType==="daily"&&<div><p className="text-lg font-bold tabular-nums text-white">{streak}</p><p className="text-[10px] text-dash-muted">Streak</p></div>}
+                    {hb.goalType==="min_per_week"&&<div><p className="text-lg font-bold tabular-nums" style={{color:wc>=hb.goalValue?"#10b981":"#94a3b8"}}>{wc}/{hb.goalValue}</p><p className="text-[10px] text-dash-muted">diese Woche</p></div>}
+                    {hb.goalType==="max_per_days"&&ld!==null&&<div><p className="text-lg font-bold tabular-nums" style={{color:ld>=hb.goalValue?"#10b981":"#ef4444"}}>{ld}</p><p className="text-[10px] text-dash-muted">Tage seit letztem</p></div>}
+                    <div><p className="text-lg font-bold tabular-nums text-white">{Math.round(periodDays(statsPeriod)*rate/100)}</p><p className="text-[10px] text-dash-muted">von {periodDays(statsPeriod)} Tagen</p></div>
+                    {avgNum!==null&&<div><p className="text-lg font-bold tabular-nums text-white">{avgNum}</p><p className="text-[10px] text-dash-muted">⌀ {hb.unit}/Tag</p></div>}
+                  </div>
+                </div>
+              );
+            })}
+            {(()=>{const days28=Array.from({length:28},(_,i)=>({ds:daysAgo(27-i),m:normalizeDay(history[daysAgo(27-i)]).mood}));if(!days28.some(x=>x.m!==null))return null;return(<div className="rounded-2xl border border-dash-border bg-dash-card p-4"><p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">Stimmung – letzte 28 Tage</p><div style={{...GRID_COL,marginBottom:3}}>{DOW.map(d=><div key={d} style={{width:16,textAlign:"center",fontSize:9,color:"#94a3b8",opacity:0.4}}>{d}</div>)}</div><div style={GRID_COL}>{days28.map(({ds,m})=><div key={ds} title={`${ds}: ${m?MOOD_L[m-1]:"–"}`} style={{width:16,height:16,borderRadius:4,background:m?MOOD_COLORS[m]:"rgba(30,45,74,0.4)",opacity:m?1:0.4,border:"0.5px solid rgba(30,45,74,0.8)"}}/>)}</div><div className="flex flex-wrap gap-3 mt-3">{MOOD_E.map((e,i)=><span key={i} className="text-[10px] text-dash-muted">{e} {MOOD_L[i]}</span>)}</div></div>);})()}
+            <p className="text-[10px] text-dash-muted text-center">Heute mit Rahmen markiert · Kästchen im 4-Wochen-Raster anklickbar</p>
+          </>)}
+          {statsSub==="corr"&&(<>
+            <div className="rounded-2xl border border-dash-border bg-dash-card p-4">
+              <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-4">Wochentag-Muster (12 Wochen)</p>
+              <div className="flex gap-2 mb-2 ml-24">{DOW.map(d=><div key={d} className="w-5 text-[9px] text-dash-muted/40 text-center">{d}</div>)}</div>
+              {habits.map(hb=>{const currDow=(new Date().getDay()+6)%7;return(<div key={hb.id} className="flex items-center gap-2 mb-2"><span className="text-[11px] text-dash-muted w-24 truncate" title={hb.name}>{hb.name}</span><div className="flex gap-1">{DOW.map((_,di)=>{let done=0,total=0;for(let w=0;w<12;w++){const back=(currDow-di+7)%7+w*7;const ds=daysAgo(back);if(ds<=today){total++;if(isCompleted(hb,ds,history))done++;}}const p=total>0?done/total:0;return<div key={di} className="w-5 h-5 rounded-sm" style={{background:hb.color,opacity:0.08+p*0.92,border:"0.5px solid rgba(30,45,74,0.8)"}} title={`${DOW[di]}: ${Math.round(p*100)}%`}/>;})}</div></div>);})}
             </div>
-          </>
-        )}
+            <div className="rounded-2xl border border-dash-border bg-dash-card p-4">
+              <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-4">12-Wochen-Verlauf (Erfüllungsrate)</p>
+              <ResponsiveContainer width="100%" height={220}><LineChart data={corrData} margin={{top:4,right:8,left:0,bottom:0}}><CartesianGrid strokeDasharray="3 3" stroke="#1e2d4a"/><XAxis dataKey="label" tick={TICK_STYLE} tickLine={false} axisLine={false}/><YAxis tick={TICK_STYLE} tickLine={false} axisLine={false} domain={[0,100]} tickFormatter={v=>`${v}%`} width={42}/><Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{color:"#e2e8f0"}} formatter={(v:unknown)=>[`${v}%`]}/>{habits.map(h=><Line key={h.id} type="monotone" dataKey={h.name} stroke={h.color} strokeWidth={2} dot={false} connectNulls/>)}</LineChart></ResponsiveContainer>
+            </div>
+            <div className="rounded-2xl border border-yellow-500/20 bg-yellow-500/5 p-3 text-xs text-yellow-200/70 leading-relaxed">💡 <strong className="text-yellow-200/90">intervals.icu-Korrelation:</strong> Mit API-Key wird hier zukünftig die Lag-1-Korrelation von Habits zu HRV und Readiness angezeigt.</div>
+          </>)}
+        </>)}
+
+        {/* ══ VERWALTEN ══ */}
+        {tab==="manage"&&(<>
+          {habits.length===0&&!form&&<div className="rounded-2xl border border-dashed border-dash-border p-10 text-center text-dash-muted text-sm">Noch keine Habits.</div>}
+          {habits.map((hb,idx)=>{
+            if(delId===hb.id)return(<div key={hb.id} className="flex items-center gap-3 p-3 rounded-2xl border border-red-500/30 bg-dash-card text-sm flex-wrap"><span className="flex-1 text-dash-muted min-w-0">„{hb.name}" löschen? (Verlauf bleibt erhalten)</span><button onClick={()=>{setHabits(p=>p.filter(x=>x.id!==hb.id));setDelId(null);}} className="text-xs px-3 py-1.5 rounded-xl text-red-400 border border-red-500/30 hover:bg-red-500/10 transition-colors">Löschen</button><button onClick={()=>setDelId(null)} className="text-xs px-3 py-1.5 rounded-xl text-dash-muted border border-dash-border hover:text-white transition-colors">Abbrechen</button></div>);
+            return(<div key={hb.id} className="flex items-center gap-3 p-3 rounded-2xl border border-dash-border bg-dash-card"><div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-base" style={{background:hb.color+"22"}}>{hb.emoji}</div><div className="flex-1 min-w-0"><p className="text-sm font-medium text-white">{hb.name}</p><p className="text-[11px] text-dash-muted">{hb.habitType==="numeric"?`Numerisch · ${hb.numTarget} ${hb.unit} · `:""}Ziel: {hb.goalType==="daily"?"täglich":hb.goalType==="min_per_week"?`${hb.goalValue}×/Woche`:`alle ${hb.goalValue} Tage`}</p></div><button onClick={()=>moveHabit(hb.id,-1)} disabled={idx===0} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors disabled:opacity-20"><ChevronUp size={14}/></button><button onClick={()=>moveHabit(hb.id,1)} disabled={idx===habits.length-1} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors disabled:opacity-20"><ChevronDown size={14}/></button><button onClick={()=>openEdit(hb)} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors"><Pencil size={14}/></button><button onClick={()=>{setDelId(hb.id);setForm(null);}} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-red-400 transition-colors"><Trash2 size={14}/></button></div>);
+          })}
+          {!form&&<button onClick={openAdd} className="w-full py-3 rounded-2xl border border-dashed border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/40 transition-colors flex items-center justify-center gap-2 text-sm"><Plus size={15}/> Habit hinzufügen</button>}
+          {form&&(
+            <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
+              <p className="text-sm font-medium text-white">{form.id?"Habit bearbeiten":"Neuer Habit"}</p>
+              <div><label className="text-[11px] text-dash-muted block mb-1">Name</label><input type="text" value={form.name||""} onChange={e=>setForm(f=>f?{...f,name:e.target.value,error:""}:null)} placeholder="z. B. Morgensport" className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
+              <div><label className="text-[11px] text-dash-muted block mb-1">Typ</label><div className="flex gap-4">{(["checkbox","numeric"]as const).map(t=><label key={t} className="flex items-center gap-2 text-sm text-dash-muted cursor-pointer"><input type="radio" name="htype" checked={form.habitType===t} onChange={()=>setForm(f=>f?{...f,habitType:t}:null)}/> {t==="checkbox"?"Checkbox":"Numerisch"}</label>)}</div></div>
+              {form.habitType==="numeric"&&<div className="grid grid-cols-2 gap-3"><div><label className="text-[11px] text-dash-muted block mb-1">Einheit</label><input type="text" value={form.unit||""} onChange={e=>setForm(f=>f?{...f,unit:e.target.value}:null)} placeholder="L, km, h …" className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div><div><label className="text-[11px] text-dash-muted block mb-1">Zielwert</label><input type="number" min="0" step="0.5" value={form.numTarget||0} onChange={e=>setForm(f=>f?{...f,numTarget:parseFloat(e.target.value)||0}:null)} className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div></div>}
+              <div><label className="text-[11px] text-dash-muted block mb-1">Icon</label><div className="flex flex-wrap gap-1">{EMOJIS.map(e=><button key={e} type="button" onClick={()=>setForm(f=>f?{...f,emoji:e}:null)} className={clsx("w-8 h-8 rounded-lg text-lg flex items-center justify-center transition-all",form.emoji===e?"bg-white/15 ring-1 ring-indigo-400":"hover:bg-white/10")}>{e}</button>)}</div></div>
+              <div><label className="text-[11px] text-dash-muted block mb-1">Farbe</label><div className="flex gap-2 flex-wrap">{COLORS.map(c=><button key={c} type="button" onClick={()=>setForm(f=>f?{...f,color:c}:null)} className="w-6 h-6 rounded-full transition-all" style={{background:c,outline:form.color===c?"2px solid white":"2px solid transparent",outlineOffset:2}}/>)}</div></div>
+              <div><label className="text-[11px] text-dash-muted block mb-1">Zieltyp</label><select value={form.goalType||"daily"} onChange={e=>setForm(f=>f?{...f,goalType:e.target.value as GoalType}:null)} className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"><option value="daily">Täglich</option><option value="min_per_week">Mindestens X mal pro Woche</option><option value="max_per_days">Höchstens alle X Tage</option></select></div>
+              {form.goalType!=="daily"&&<div><label className="text-[11px] text-dash-muted block mb-1">{form.goalType==="min_per_week"?"Anzahl pro Woche":"Intervall in Tagen"}</label><input type="number" min="1" max={form.goalType==="min_per_week"?7:365} value={form.goalValue||1} onChange={e=>setForm(f=>f?{...f,goalValue:Math.max(1,parseInt(e.target.value)||1)}:null)} className="w-24 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>}
+              {form.error&&<p className="text-xs text-red-400">{form.error}</p>}
+              <div className="flex gap-2 pt-1"><button onClick={saveForm} className="flex-1 py-2 text-sm font-medium rounded-xl text-white transition-colors" style={{backgroundColor:"var(--a-600)"}}>{form.id?"Speichern":"Hinzufügen"}</button><button onClick={()=>setForm(null)} className="px-4 py-2 text-sm text-dash-muted border border-dash-border rounded-xl hover:text-white transition-colors">Abbrechen</button></div>
+            </div>
+          )}
+        </>)}
+
+        {/* ══ EINSTELLUNGEN ══ */}
+        {tab==="settings"&&(<>
+          <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
+            <p className="text-sm font-semibold text-white">Datenspeicherung</p>
+            <p className="text-xs text-dash-muted leading-relaxed">
+              Daten werden <strong className="text-white">server-seitig</strong> als JSON gespeichert und sind auf allen Geräten verfügbar.
+              Beim Laden wird immer zuerst der Server abgefragt. localStorage dient als Offline-Cache.
+            </p>
+            <div className="flex items-center gap-3">
+              <span className={clsx("text-xs px-3 py-1.5 rounded-xl border", syncState==="saved"?"border-emerald-500/30 text-emerald-400 bg-emerald-500/5":syncState==="offline"?"border-yellow-500/30 text-yellow-400 bg-yellow-500/5":"border-dash-border text-dash-muted")}>
+                {syncState==="saved"?"✓ Mit Server synchronisiert":syncState==="offline"?"⚠ Server nicht erreichbar (Offline-Modus)":syncState==="saving"?"Speichern…":"–"}
+              </span>
+              <button onClick={async()=>{const d=await loadFromServer();if(d){if(d.habits)setHabits(d.habits);if(d.history){const norm:History={};for(const[k,v]of Object.entries(d.history))norm[k]=normalizeDay(v);setHistory(norm);}setSyncState("saved");}}} className="text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors flex items-center gap-1"><RefreshCw size={11}/> Neu laden</button>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
+            <p className="text-sm font-semibold text-white">intervals.icu Wellness-Sync</p>
+            <p className="text-xs text-dash-muted leading-relaxed">Habits → Tags + Kommentar · Mood → <code className="text-indigo-300 text-[10px]">motivation</code>. Wasserziel wird dynamisch berechnet: Sportart × Intensität + Temperatur.</p>
+            <div><label className="text-[11px] text-dash-muted block mb-1">Athleten-ID</label><input type="text" value={settings.ivAthleteId} onChange={e=>setSettings(s=>({...s,ivAthleteId:e.target.value}))} placeholder="i12345" className="w-40 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
+            <div><label className="text-[11px] text-dash-muted block mb-1">API-Key</label><input type="password" value={settings.ivApiKey} onChange={e=>setSettings(s=>({...s,ivApiKey:e.target.value}))} placeholder="••••••••" className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <button onClick={async()=>{setSyncMsg("Synchronisiere…");const ok=await doSync(today);setSyncMsg(ok?`✓ Sync: ${new Date().toLocaleString("de-DE")}`:"✗ Fehlgeschlagen");}} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><RefreshCw size={12}/> Jetzt synchronisieren</button>
+              <label className="flex items-center gap-2 text-xs text-dash-muted cursor-pointer"><input type="checkbox" checked={settings.autoSync} onChange={e=>setSettings(s=>({...s,autoSync:e.target.checked}))}/>Täglich um <input type="time" value={settings.notifTime} onChange={e=>setSettings(s=>({...s,notifTime:e.target.value}))} className="w-24 px-2 py-1 text-xs bg-dash-bg border border-dash-border rounded-lg text-white focus:outline-none focus:border-indigo-500"/> Uhr</label>
+            </div>
+            {syncMsg&&<p className="text-[11px] text-dash-muted">{syncMsg}</p>}
+            {settings.lastSync&&<p className="text-[11px] text-dash-muted/50">Letzter Sync: {new Date(settings.lastSync).toLocaleString("de-DE")}</p>}
+          </div>
+
+          <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
+            <p className="text-sm font-semibold text-white">Standort (Temperaturanpassung)</p>
+            <p className="text-xs text-dash-muted">&lt;20°C: +0 L · 20–25°C: +0,3 L · 25–30°C: +0,6 L · 30–35°C: +0,9 L · &gt;35°C: +1,2 L</p>
+            <div><label className="text-[11px] text-dash-muted block mb-1">Ortsname</label><input type="text" value={settings.locationName} onChange={e=>setSettings(s=>({...s,locationName:e.target.value}))} placeholder="z. B. Ennigerloh" className="w-48 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <button onClick={getLocation} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><MapPin size={12}/> Standort automatisch ermitteln</button>
+              {settings.latitude!==null&&<span className="text-[11px] text-dash-muted">✓ {settings.latitude?.toFixed(3)}, {settings.longitude?.toFixed(3)}</span>}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
+            <p className="text-sm font-semibold text-white">Benachrichtigungen</p>
+            {typeof window!=="undefined"&&"Notification" in window&&(Notification.permission==="granted"?(<label className="flex items-center gap-2 text-xs text-dash-muted cursor-pointer flex-wrap"><input type="checkbox" checked={settings.notifEnabled} onChange={e=>setSettings(s=>({...s,notifEnabled:e.target.checked}))}/>Aktiv um <input type="time" value={settings.notifTime} onChange={e=>setSettings(s=>({...s,notifTime:e.target.value}))} className="w-24 px-2 py-1 text-xs bg-dash-bg border border-dash-border rounded-lg text-white focus:outline-none focus:border-indigo-500"/></label>):Notification.permission==="denied"?(<p className="text-xs text-red-400">Im Browser blockiert.</p>):(<button onClick={async()=>{const p=await Notification.requestPermission();if(p==="granted")setSettings(s=>({...s,notifEnabled:true}));}} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><Bell size={12}/> Benachrichtigungen erlauben</button>))}
+          </div>
+
+          <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
+            <p className="text-sm font-semibold text-white">Daten-Export</p>
+            <div className="flex gap-2 flex-wrap"><button onClick={exportCSV} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><Download size={12}/> CSV</button><button onClick={exportJSON} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><Download size={12}/> JSON</button></div>
+            <div><label className="text-[11px] text-dash-muted block mb-1">JSON importieren <strong>(überschreibt alle Daten!)</strong></label><input type="file" accept=".json" onChange={e=>{const file=e.target.files?.[0];if(!file)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target?.result as string);if(d.habits)setHabits(d.habits);if(d.history){const norm:History={};for(const[k,v]of Object.entries(d.history))norm[k]=normalizeDay(v);setHistory(norm);}e.target.value="";}catch{alert("Ungültige JSON-Datei.");}};r.readAsText(file);}} className="text-xs text-dash-muted"/></div>
+          </div>
+        </>)}
       </div>
     </>
   );
