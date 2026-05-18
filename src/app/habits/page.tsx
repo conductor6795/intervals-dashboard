@@ -316,7 +316,7 @@ export default function HabitsPage() {
   const day=useMemo(()=>normalizeDay(history[selDate]),[history,selDate]);
   const doneCount=useMemo(()=>habits.filter(h=>isCompleted(h,selDate,history)).length,[habits,history,selDate]);
   const pct=habits.length?doneCount/habits.length:0;
-  const selLabel=useMemo(()=>{const d=fromDS(selDate);return{dow:d.toLocaleDateString("de-DE",{weekday:"long"}),dat:d.toLocaleDateString("de-DE",{day:"numeric",month:"long",year:"numeric"});};},[selDate]);
+  const selLabel=useMemo(()=>{const d=fromDS(selDate);return{dow:d.toLocaleDateString("de-DE",{weekday:"long"}),dat:d.toLocaleDateString("de-DE",{day:"numeric",month:"long",year:"numeric"})};},[selDate]);
 
   const prevDate=()=>{const d=fromDS(selDate);d.setDate(d.getDate()-1);setSelDate(toDS(d));};
   const nextDate=()=>{if(isToday)return;const d=fromDS(selDate);d.setDate(d.getDate()+1);setSelDate(toDS(d));};
