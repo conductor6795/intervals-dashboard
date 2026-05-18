@@ -5,7 +5,7 @@ import { clsx } from "clsx";
 import {
   ComposedChart, Bar, Line, Area,
   XAxis, YAxis, CartesianGrid, Tooltip,
-  Legend, ResponsiveContainer, ReferenceLine,
+  Legend, ResponsiveContainer, ReferenceLine, Label,
 } from "recharts";
 import { format, parseISO, startOfWeek } from "date-fns";
 import { de } from "date-fns/locale";
@@ -99,6 +99,53 @@ function buildStrainAndHoursData(
     .filter((p) => p.hours > 0 || p.avgStrain != null);
 }
 
+// ── Aerobic Efficiency (EF) weekly aggregation ────────────────────────────────
+
+interface EFPoint {
+  weekLabel: string;
+  ef: number | null;
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function buildEFData(activities: Activity[]): EFPoint[] {
+  const efByWeek = new Map<string, number[]>();
+
+  for (const a of activities) {
+    const type = a.type ?? "";
+    if (!["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"].includes(type)) continue;
+
+    const watts = a.average_watts;
+    const hr = a.average_heartrate;
+    if (!watts || !hr || watts <= 0 || hr <= 0) continue;
+
+    const ef = watts / hr;
+    if (ef < 0.5 || ef > 5.0) continue; // Ausreißer filtern
+
+    const key = format(
+      startOfWeek(parseISO(a.start_date_local), { weekStartsOn: 1 }),
+      "yyyy-MM-dd",
+    );
+    const arr = efByWeek.get(key) ?? [];
+    arr.push(ef);
+    efByWeek.set(key, arr);
+  }
+
+  return Array.from(efByWeek.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, values]) => ({
+      weekLabel: format(parseISO(key), "dd.MM.", { locale: de }),
+      ef: parseFloat(median(values).toFixed(2)),
+    }));
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function FitnessPage() {
@@ -173,6 +220,9 @@ export default function FitnessPage() {
 
   // Does the strain data actually contain any non-null strain values?
   const hasStrainData = strainHoursData.some((p) => p.avgStrain != null);
+
+  const efData = useMemo(() => buildEFData(activities), [activities]);
+  const hasEFData = efData.length > 0;
 
   const hasProjection = projectedData.length > 0;
 
@@ -416,10 +466,80 @@ export default function FitnessPage() {
           )}
         </section>
 
+        {/* ── Aerobe Effizienz (EF) ─────────────────────────────────────── */}
+        <section>
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium">
+              Aerobe Effizienz (EF) — wöchentlicher Median
+            </p>
+            {!hasEFData && !loading && (
+              <span className="text-[10px] text-dash-muted italic">
+                Kein Powermeter oder HR-Daten gefunden
+              </span>
+            )}
+          </div>
+
+          {loading ? (
+            <Skeleton className="h-56" />
+          ) : !hasEFData ? (
+            <div className="bg-dash-card border border-dash-border rounded-2xl p-8 flex items-center justify-center">
+              <p className="text-xs text-dash-muted">
+                EF wird aus Ø Leistung ÷ Ø Herzfrequenz berechnet — Powermeter + HR erforderlich
+              </p>
+            </div>
+          ) : (
+            <div className="bg-dash-card border border-dash-border rounded-2xl p-5">
+              <ResponsiveContainer width="100%" height={220}>
+                <ComposedChart
+                  data={efData}
+                  margin={{ top: 4, right: 8, left: -24, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--dash-border)" />
+                  <XAxis
+                    dataKey="weekLabel"
+                    tick={{ fill: "var(--dash-muted)", fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={false}
+                    interval="preserveStartEnd"
+                  />
+                  <YAxis
+                    tick={{ fill: "var(--dash-muted)", fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={false}
+                    width={32}
+                    domain={["auto", "auto"]}
+                    tickFormatter={(v: number) => v.toFixed(1)}
+                  />
+                  <Tooltip
+                    contentStyle={TOOLTIP_STYLE}
+                    labelStyle={{ color: "#e2e8f0" }}
+                    formatter={(value: number) => [value.toFixed(2), "EF (W/bpm)"]}
+                  />
+                  <ReferenceLine y={1.2} stroke="#10b981" strokeOpacity={0.35} strokeDasharray="4 3">
+                    <Label value="Basis 1.2" position="insideTopRight" fontSize={9} fill="#10b981" fillOpacity={0.6} />
+                  </ReferenceLine>
+                  <ReferenceLine y={1.5} stroke="#10b981" strokeOpacity={0.35} strokeDasharray="4 3">
+                    <Label value="Gut 1.5" position="insideTopRight" fontSize={9} fill="#10b981" fillOpacity={0.6} />
+                  </ReferenceLine>
+                  <Line
+                    type="monotone"
+                    dataKey="ef"
+                    name="EF (W/bpm)"
+                    stroke="#10b981"
+                    strokeWidth={2.5}
+                    dot={{ r: 3, fill: "#10b981", strokeWidth: 0 }}
+                    connectNulls
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </section>
+
         {/* ── Legende ───────────────────────────────────────────────────── */}
         <section className="p-5 rounded-2xl border border-dash-border bg-dash-card/50">
           <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">Erklärung</p>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs text-dash-muted">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 text-xs text-dash-muted">
             <div>
               <p className="text-blue-400 font-medium mb-1">CTL – Chronic Training Load</p>
               <p>42-Tage-EMA. Langfristige Fitness. Gesunder Aufbau: &lt; 7 CTL/Woche.</p>
@@ -435,6 +555,10 @@ export default function FitnessPage() {
             <div>
               <p className="text-orange-400 font-medium mb-1">Strain (orange Linie)</p>
               <p>Durchschnittlicher täglicher Trainingsbelastungswert pro Woche (ctlLoad / Strain-Feld aus Wellness-API).</p>
+            </div>
+            <div>
+              <p className="text-emerald-400 font-medium mb-1">EF – Efficiency Factor</p>
+              <p>Ø Leistung ÷ Ø Herzfrequenz pro Ride (wöchentlicher Median). Steigender Trend = bessere Z2-Basis. Basis: &gt;1.2, Gut: &gt;1.5.</p>
             </div>
           </div>
         </section>
