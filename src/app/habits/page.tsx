@@ -197,8 +197,6 @@ export default function HabitsPage() {
   const [statsPeriod,    setStatsPeriod]    = useState<Period>("4w");
   const [selDate,        setSelDate]        = useState(todayStr());
   const [form,           setForm]           = useState<(Partial<Habit>&{error?:string})|null>(null);
- const [selDate, setSelDate] = useState("");
- useEffect(() => { setSelDate(todayStr()); }, []);
   const [syncMsg,        setSyncMsg]        = useState("");
   const [loaded,         setLoaded]         = useState(false);
   const [syncState,      setSyncState]      = useState<"idle"|"saving"|"saved"|"offline">("idle");
