@@ -118,16 +118,31 @@ function median(values: number[]): number {
 function buildEFData(activities: Activity[]): EFPoint[] {
   const efByWeek = new Map<string, number[]>();
 
-  for (const a of activities) {
-    const type = a.type ?? "";
-    if (!["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"].includes(type)) continue;
+  const RIDE_TYPES = ["ride", "virtualride", "gravelride", "mountainbikeride", "cycling", "bike"];
 
-    const watts = a.average_watts;
+  for (const a of activities) {
+    const type = (a.type ?? "").toLowerCase();
+    const isRide = RIDE_TYPES.some(t => type.includes(t));
+
+    // Prüfe alle möglichen Watt-Feldnamen (Garmin/Strava/Wahoo liefern unterschiedlich)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = a as any;
+    const watts: number | null =
+      raw.average_watts ||
+      raw.icu_average_watts ||
+      raw.weighted_average_watts ||
+      raw.icu_weighted_average_watts ||
+      raw.avg_power ||
+      raw.norm_power ||
+      null;
+
     const hr = a.average_heartrate;
+
+    if (!isRide && !watts) continue;
     if (!watts || !hr || watts <= 0 || hr <= 0) continue;
 
     const ef = watts / hr;
-    if (ef < 0.5 || ef > 5.0) continue; // Ausreißer filtern
+    if (ef < 0.5 || ef > 5.0) continue;
 
     const key = format(
       startOfWeek(parseISO(a.start_date_local), { weekStartsOn: 1 }),
@@ -482,9 +497,12 @@ export default function FitnessPage() {
           {loading ? (
             <Skeleton className="h-56" />
           ) : !hasEFData ? (
-            <div className="bg-dash-card border border-dash-border rounded-2xl p-8 flex items-center justify-center">
+            <div className="bg-dash-card border border-dash-border rounded-2xl p-8 flex flex-col items-center justify-center gap-2">
               <p className="text-xs text-dash-muted">
-                EF wird aus Ø Leistung ÷ Ø Herzfrequenz berechnet — Powermeter + HR erforderlich
+                Keine Leistungsdaten gefunden — EF benötigt Ø Watt + Ø Herzfrequenz pro Ride
+              </p>
+              <p className="text-[10px] text-dash-muted/60">
+                Prüfe ob deine Aktivitäten in intervals.icu Wattwerte enthalten (Powermeter erforderlich)
               </p>
             </div>
           ) : (

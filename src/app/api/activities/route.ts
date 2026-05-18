@@ -17,11 +17,15 @@ export async function GET(req: NextRequest) {
   const oldest = searchParams.get("oldest") ?? getDateDaysAgo(60);
   const newest = searchParams.get("newest") ?? today();
 
+  // Alle relevanten Leistungsfelder — intervals.icu nutzt je nach
+  // Sync-Quelle (Garmin/Strava/Wahoo) unterschiedliche Feldnamen für Watt
   const url =
     `${BASE}/${athleteId}/activities?oldest=${oldest}&newest=${newest}` +
     `&fields=id,start_date_local,type,name,moving_time,elapsed_time,distance,` +
     `total_elevation_gain,average_heartrate,max_heartrate,icu_training_load,` +
-    `icu_intensity,average_watts,max_watts,race,commute`;
+    `icu_intensity,average_watts,max_watts,race,commute,` +
+    `icu_average_watts,weighted_average_watts,icu_weighted_average_watts,` +
+    `avg_power,norm_power`;
 
   try {
     const res = await fetch(url, {
