@@ -3,6 +3,9 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 
+// Verhindert Next.js-Caching des GET-Response → Handy bekommt immer aktuellen Stand
+export const dynamic = "force-dynamic";
+
 // Speicherpfad: /app/data/habits.json im Container
 // → via docker-compose Volume persistent auf dem Host
 const DATA_DIR  = process.env.HABITS_DATA_DIR ?? path.join(process.cwd(), "data");
