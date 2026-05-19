@@ -124,6 +124,20 @@ export function calcCVZone(
   };
 }
 
+/**
+ * Trainingsbelastungs-Score aus TSB (Training Stress Balance = CTL − ATL).
+ * TSB negativ = Erschöpfung überwiegt → Score sinkt.
+ * TSB = 0   → Score 50 (neutral)
+ * TSB = −30 → Score ≈ 5  (stark erschöpft, z.B. nach 5h-Ride)
+ * TSB = +10 → Score 65   (frisch, Tapering)
+ * Skalierungsfaktor 1.5 kalibriert für Ausdauersportler mit normalem TSB-Bereich −40…+20.
+ */
+function calcLoadScore(today: WellnessDay): number {
+  if (today.ctl == null || today.atl == null) return 50;
+  const tsb = today.ctl - today.atl;
+  return clamp(50 + tsb * 1.5, 0, 100);
+}
+
 /** 28-Tage Baseline für Ruhepuls */
 function rhrBaseline(days: WellnessDay[]): number {
   const values = days
@@ -136,8 +150,10 @@ function rhrBaseline(days: WellnessDay[]): number {
 /**
  * Trainingsbereitschaft 0–100
  * Gewichtung (Notion – Einzige Quelle der Wahrheit):
- *   HRV-Trend 35 % · Schlaf 20 % · RHR 15 % · Subjektiv 20 % · CV-Stabilität 10 %
+ *   Load/TSB 25 % · HRV-Trend 25 % · Subjektiv 15 % · Schlaf 15 % · RHR 10 % · CV-Stabilität 10 %
+ * Load/TSB: dominanter Faktor, da er direkte Erschöpfung durch Workouts abbildet.
  * Subjektiv: Erschöpfung / Kater / Stimmung / Motivation gleichgewichtet (je 25 %)
+ * Fallback bei fehlendem CTL/ATL: Load-Score = 50 (neutral)
  */
 export function calcTrainingReadiness(
   today: WellnessDay,
@@ -175,12 +191,16 @@ export function calcTrainingReadiness(
   // CV-Stabilität
   const cvScore = cv != null ? clamp(((10 - cv) / 10) * 100, 0, 100) : 50;
 
+  // Trainingsbelastung via TSB (CTL − ATL)
+  const loadScore = calcLoadScore(today);
+
   const readiness = Math.round(
-    hrvScore * 0.35 +
-    sleepScore * 0.20 +
-    rhrScore * 0.15 +
-    subjectiveScore * 0.20 +
-    cvScore * 0.10
+    loadScore   * 0.25 +
+    hrvScore    * 0.25 +
+    subjectiveScore * 0.15 +
+    sleepScore  * 0.15 +
+    rhrScore    * 0.10 +
+    cvScore     * 0.10
   );
   return clamp(readiness, 0, 100);
 }
@@ -188,7 +208,10 @@ export function calcTrainingReadiness(
 /**
  * Erholungswert 0–100 %
  * Gewichtung (Notion – Einzige Quelle der Wahrheit):
- *   HRV-Ratio 40 % · Schlaf 30 % · RHR 20 % · Muskelkater 10 %
+ *   Schlaf 25 % · HRV-Ratio 30 % · Load/TSB 20 % · RHR 15 % · Muskelkater 10 %
+ * Load/TSB: erfasst metabolische/muskuläre Erschöpfung durch vorangegangene Workouts,
+ *   die HRV und RHR oft erst verzögert abbilden.
+ * Fallback bei fehlendem CTL/ATL: Load-Score = 50 (neutral)
  */
 export function calcRecoveryScore(
   today: WellnessDay,
@@ -215,10 +238,14 @@ export function calcRecoveryScore(
   // Nur Muskelkater (kein Fatigue) – laut Notion
   const sorenessScore = today.soreness != null ? ((5 - today.soreness) / 4) * 100 : 50;
 
+  // Trainingsbelastung via TSB (CTL − ATL)
+  const loadScore = calcLoadScore(today);
+
   const recovery = Math.round(
-    hrvRecovery * 0.40 +
-    sleepRecovery * 0.30 +
-    rhrRecovery * 0.20 +
+    hrvRecovery  * 0.30 +
+    sleepRecovery * 0.25 +
+    loadScore    * 0.20 +
+    rhrRecovery  * 0.15 +
     sorenessScore * 0.10
   );
   return clamp(recovery, 0, 100);
@@ -265,6 +292,7 @@ export function calcAllMetrics(days: WellnessDay[]): CalculatedMetrics {
       hrv7: null,
       cv: null,
       trendRatio: null,
+      tsb: null,
       trainingReadiness: 50,
       recoveryScore: 50,
       cvZone: "green",
@@ -276,6 +304,7 @@ export function calcAllMetrics(days: WellnessDay[]): CalculatedMetrics {
   const hrv7 = calcHRV7(days);
   const cv = calcCV(days);
   const trendRatio = calcTrendRatio(getHRV(today), hrv7);
+  const tsb = (today.ctl != null && today.atl != null) ? today.ctl - today.atl : null;
   const trainingReadiness = calcTrainingReadiness(today, days);
   const recoveryScore = calcRecoveryScore(today, days);
   const { zone, label, advice } = calcCVZone(trendRatio, cv);
@@ -284,6 +313,7 @@ export function calcAllMetrics(days: WellnessDay[]): CalculatedMetrics {
     hrv7,
     cv,
     trendRatio,
+    tsb,
     trainingReadiness,
     recoveryScore,
     cvZone: zone,

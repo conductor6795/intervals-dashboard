@@ -111,6 +111,7 @@ export interface CalculatedMetrics {
   hrv7: number | null;
   cv: number | null;
   trendRatio: number | null;
+  tsb: number | null;        // Training Stress Balance (CTL − ATL), für Anzeige im Dashboard
   trainingReadiness: number;
   recoveryScore: number;
   cvZone: CVZone;
