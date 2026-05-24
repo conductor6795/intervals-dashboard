@@ -28,16 +28,14 @@ interface HabitSettings {
   notifEnabled: boolean; notifTime: string; autoSync: boolean; lastSync: string | null;
   latitude: number | null; longitude: number | null; locationName: string;
 }
-
-/* ── Hydration-Einstellungen (localStorage: ht_hydration) ── */
 interface HydrationSettings {
   bodyWeightKg: number;
   useWeightBased: boolean;
   baseWaterL: number;
   sweatTests: {
-    outdoor24: number | null;   // ml/h bei ~24°C outdoor
-    outdoor28: number | null;   // ml/h bei >28°C outdoor
-    rolle: number | null;        // ml/h auf der Rolle / Zwift
+    outdoor24: number | null;
+    outdoor28: number | null;
+    rolle: number | null;
   };
 }
 const DEFAULT_HYDRATION: HydrationSettings = {
@@ -71,30 +69,26 @@ const VESSEL_SIZES  = [0.2, 0.3, 0.7];
 /* ══════════════════════════════════════
    HYDRATION — Wissenschaftlich korrigierte Formeln
    Quellen: ACSM, Journal of Applied Physiology (2024), Gatorade SSI
+   Temperatur = Multiplikator auf Schweißrate (kein Flatbetrag)
+   Zwift/Rolle > Outdoor wegen fehlendem Fahrtwind
 ══════════════════════════════════════ */
-
-/* Basis-Schweißraten nach Sportart (L/h) bei ~22°C, moderater Intensität.
-   Zwift / VirtualRide höher als outdoor: kein Fahrtwind → schlechtere Verdunstung → mehr Schweiß. */
 const SWEAT_RATES: Record<string, number> = {
-  Run: 1.0, VirtualRun: 1.1, TrailRun: 1.1,
-  Ride: 0.8, VirtualRide: 1.1, MountainBikeRide: 0.9, GravelRide: 0.85,
-  Swim: 0.35, Walk: 0.45, Hike: 0.55,
-  WeightTraining: 0.6, Workout: 0.65, Crossfit: 0.8,
-  Soccer: 1.0, Basketball: 0.9, Tennis: 0.75, Rowing: 0.85,
+  Run:1.0, VirtualRun:1.1, TrailRun:1.1,
+  Ride:0.8, VirtualRide:1.1, MountainBikeRide:0.9, GravelRide:0.85,
+  Swim:0.35, Walk:0.45, Hike:0.55,
+  WeightTraining:0.6, Workout:0.65, Crossfit:0.8,
+  Soccer:1.0, Basketball:0.9, Tennis:0.75, Rowing:0.85,
 };
 
-/* Kontinuierlicher Temperaturmultiplikator (keine Stufensprünge).
-   Über 30°C steil, basierend auf Studiendaten (4× Anstieg von 31→34°C). */
 function tempMultiplier(tempC: number): number {
   if (tempC <= 10) return 0.50;
-  if (tempC <= 20) return 0.50 + (tempC - 10) * 0.025;   // 0.50 → 0.75
-  if (tempC <= 25) return 0.75 + (tempC - 20) * 0.05;    // 0.75 → 1.00
-  if (tempC <= 30) return 1.00 + (tempC - 25) * 0.10;    // 1.00 → 1.50
-  if (tempC <= 35) return 1.50 + (tempC - 30) * 0.30;    // 1.50 → 3.00
-  return 3.00 + (tempC - 35) * 0.20;                     // 3.00+
+  if (tempC <= 20) return 0.50 + (tempC - 10) * 0.025;
+  if (tempC <= 25) return 0.75 + (tempC - 20) * 0.05;
+  if (tempC <= 30) return 1.00 + (tempC - 25) * 0.10;
+  if (tempC <= 35) return 1.50 + (tempC - 30) * 0.30;
+  return 3.00 + (tempC - 35) * 0.20;
 }
 
-/* Kontinuierlicher Intensitätsfaktor aus Load/h-Wert. */
 function intensityFactor(loadPerHour: number): number {
   if (loadPerHour <= 30)  return 0.70;
   if (loadPerHour <= 70)  return 0.70 + (loadPerHour - 30)  / 40  * 0.30;
@@ -103,7 +97,6 @@ function intensityFactor(loadPerHour: number): number {
   return Math.min(1.75 + (loadPerHour - 200) / 100 * 0.25, 2.0);
 }
 
-/* Kleiner Temperatur-Basiszuschlag für Tage ohne Workout (Hintergrundverlust). */
 function getTempBaseBonus(tempC: number): number {
   if (tempC < 20) return 0.0;
   if (tempC < 25) return 0.1;
@@ -112,8 +105,6 @@ function getTempBaseBonus(tempC: number): number {
   return 0.5;
 }
 
-/* Schweißrate in L/h — nutzt persönliche Tests wenn vorhanden, sonst generische Werte.
-   Temperatur ist Multiplikator auf die Rate (nicht seperater Zuschlag). */
 function getSweatRateL(
   type: string,
   loadPerHour: number,
@@ -123,36 +114,42 @@ function getSweatRateL(
   const isIndoor = type === "VirtualRide" || type === "VirtualRun";
   const lf = intensityFactor(loadPerHour);
 
-  // Rolle/Zwift → eigener Testwert, kein Temperatureffekt (indoor)
-  if (isIndoor && tests.rolle !== null) {
-    return (tests.rolle / 1000) * lf;
-  }
+  if (isIndoor && tests.rolle !== null) return (tests.rolle / 1000) * lf;
 
-  // Beide Outdoor-Tests → lineare Interpolation
   if (tests.outdoor24 !== null && tests.outdoor28 !== null) {
     const slope = (tests.outdoor28 - tests.outdoor24) / (28 - 24);
     const rateMlH = tests.outdoor24 + slope * (tempC - 24);
     return (Math.max(300, rateMlH) / 1000) * lf;
   }
 
-  // Nur 24°C-Test → Extrapolation mit Temperaturkurve
   if (tests.outdoor24 !== null) {
     const rateMlH = tests.outdoor24 * tempMultiplier(tempC) / tempMultiplier(24);
     return (Math.max(300, rateMlH) / 1000) * lf;
   }
 
-  // Kein Test → generische Tabellenwerte
   const base = SWEAT_RATES[type] ?? 0.7;
   return base * tempMultiplier(tempC) * lf;
 }
 
-/* Kalibrierungsstatus für den ⚡-Tooltip. */
 function calibLabel(tests: HydrationSettings["sweatTests"]): string {
   const { outdoor24, outdoor28, rolle } = tests;
   if (outdoor24 && outdoor28 && rolle) return "vollständig kalibriert";
   if (outdoor24 && outdoor28)          return "kalibriert (2 Tests, interpoliert)";
   if (outdoor24)                       return "kalibriert (1 Test, extrapoliert)";
   return "Schätzwerte (kein Test)";
+}
+
+/* ─────────────── Proxy-Fetch für intervals.icu (umgeht CORS) ─────────────── */
+async function ivFetch(path: string, apiKey: string): Promise<unknown> {
+  const res = await fetch(`/api/iv-proxy?path=${encodeURIComponent(path)}`, {
+    headers: { "x-iv-key": apiKey },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(err?.error ?? `HTTP ${res.status}`);
+  }
+  return res.json();
 }
 
 /* ─────────────── Utils ─────────────── */
@@ -175,7 +172,7 @@ function isCompleted(h: Habit, date: string, history: History): boolean {
   return day.checked.includes(h.id);
 }
 function calcStreak(h: Habit, history: History): number {
-  let start=isCompleted(h,todayStr(),history)?0:1, s=0;
+  const start=isCompleted(h,todayStr(),history)?0:1; let s=0;
   for(let i=start;i<365;i++){if(!isCompleted(h,daysAgo(i),history))break;s++;} return s;
 }
 function calcWeekCount(h: Habit, history: History): number {
@@ -195,7 +192,7 @@ function periodRate(h: Habit, history: History, p: Period): number {
 }
 function buildPeriodData(h: Habit, history: History, p: Period) {
   if(p==="4w")return null;
-  const days=periodDays(p), gran=(p==="3m"||p==="6m")?"week":"month";
+  const days=periodDays(p),gran=(p==="3m"||p==="6m")?"week":"month";
   if(gran==="week"){
     const weeks=Math.ceil(days/7);
     return Array.from({length:weeks},(_,w)=>{
@@ -251,7 +248,6 @@ async function loadFromServer(): Promise<{habits?:Habit[];history?:History;setti
     return data;
   } catch { return null; }
 }
-
 async function saveToServer(habits: Habit[], history: History, settings: HabitSettings): Promise<boolean> {
   try {
     const r = await fetch("/api/habits", {
@@ -274,6 +270,7 @@ export default function HabitsPage() {
   const [hydrationSettings, setHydrationSettings] = useState<HydrationSettings>(DEFAULT_HYDRATION);
   const [dynamicTargets,    setDynamicTargets]    = useState<Record<string,number>>({});
   const [dynamicInfo,       setDynamicInfo]       = useState<Record<string,string>>({});
+  const [hydrationDebug,    setHydrationDebug]    = useState<string>("");
   const [tab,               setTab]               = useState<Tab>("today");
   const [statsSub,          setStatsSub]          = useState<"stats"|"corr">("stats");
   const [statsPeriod,       setStatsPeriod]       = useState<Period>("4w");
@@ -286,16 +283,14 @@ export default function HabitsPage() {
 
   const saveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  /* ── Laden: Server → localStorage Fallback ── */
+  /* ── Laden ── */
   useEffect(()=>{
     const load = async () => {
-      // Hydration-Einstellungen (nur localStorage, gerätespezifisch)
       try {
         const h = JSON.parse(localStorage.getItem("ht_hydration") || "null");
         if (h) setHydrationSettings(prev => ({ ...prev, ...h, sweatTests: { ...prev.sweatTests, ...h.sweatTests } }));
       } catch {}
 
-      // Primär: von Server laden
       const serverData = await loadFromServer();
       if (serverData) {
         if (serverData.habits)   setHabits(serverData.habits);
@@ -311,7 +306,6 @@ export default function HabitsPage() {
         if (serverData.settings) localStorage.setItem("ht_settings", JSON.stringify(serverData.settings));
         setSyncState("saved");
       } else {
-        // Fallback: localStorage
         try { setHabits(JSON.parse(localStorage.getItem("ht_habits")||"null")??DEFAULTS); } catch { setHabits(DEFAULTS); }
         try {
           const raw=JSON.parse(localStorage.getItem("ht_history")||"{}") as Record<string,unknown>;
@@ -327,7 +321,7 @@ export default function HabitsPage() {
     load();
   },[]);
 
-  /* ── Speichern: localStorage sofort + Server debounced ── */
+  /* ── Speichern ── */
   useEffect(()=>{
     if (!loaded) return;
     localStorage.setItem("ht_habits",   JSON.stringify(habits));
@@ -341,7 +335,7 @@ export default function HabitsPage() {
     }, 800);
   },[habits, history, settings, loaded]);
 
-  /* ── Hydration-Einstellungen in localStorage speichern ── */
+  /* ── Hydration-Einstellungen speichern ── */
   useEffect(()=>{
     if (!loaded) return;
     localStorage.setItem("ht_hydration", JSON.stringify(hydrationSettings));
@@ -362,67 +356,102 @@ export default function HabitsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[settings.notifEnabled,settings.notifTime,settings.autoSync,loaded]);
 
-  /* ── Dynamisches Hydrationsziel (korrigierte Formel) ── */
+  /* ── Dynamisches Hydrationsziel ── */
   useEffect(()=>{
-    if(!settings.ivAthleteId||!settings.ivApiKey||!loaded)return;
-    const waterHabits=habits.filter(h=>h.habitType==="numeric"&&["l","liter"].includes(h.unit.toLowerCase()));
-    if(!waterHabits.length)return;
+    if(!loaded) return;
+    // Wenn keine IV-Credentials: nur Basis + Temperatur berechnen
+    const waterHabits = habits.filter(h =>
+      h.habitType==="numeric" && ["l","liter"].includes(h.unit.toLowerCase())
+    );
+    if(!waterHabits.length) return;
 
-    const run=async()=>{
-      interface IvAct { type?:string; sport_type?:string; moving_time?:number; icu_training_load?:number; training_load_score?:number; }
-      let acts:IvAct[]=[];
-      try{
-        const r=await fetch(
-          `https://intervals.icu/api/v1/athlete/${settings.ivAthleteId}/activities?oldest=${selDate}&newest=${selDate}`,
-          {headers:{Authorization:"Basic "+btoa(`API_KEY:${settings.ivApiKey}`)}}
-        );
-        if(r.ok)acts=await r.json();
-      }catch{}
+    const run = async () => {
+      const debugLines: string[] = [];
 
-      let tempC=18,tempSource="Schätzwert";
-      if(settings.latitude!==null&&settings.longitude!==null){
-        try{
-          const wr=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${settings.latitude}&longitude=${settings.longitude}&current=temperature_2m&timezone=auto`);
-          if(wr.ok){const wd=await wr.json();if(wd.current?.temperature_2m!==undefined){tempC=wd.current.temperature_2m;tempSource=`${tempC.toFixed(1)}°C`;}}
-        }catch{}
-      }
-
-      /* Basis-Wasserbedarf */
+      // Basis-Wasserbedarf
       const baseWater = hydrationSettings.useWeightBased
         ? Math.round(hydrationSettings.bodyWeightKg * 0.035 * 10) / 10
         : hydrationSettings.baseWaterL;
+      debugLines.push(`Basis: ${baseWater} L`);
 
-      const newTargets:Record<string,number>={},newInfo:Record<string,string>={};
+      // Temperatur (Open-Meteo)
+      let tempC = 18, tempSource = "Schätzwert (18°C)";
+      if(settings.latitude!==null && settings.longitude!==null){
+        try{
+          const wr = await fetch(
+            `https://api.open-meteo.com/v1/forecast?latitude=${settings.latitude}&longitude=${settings.longitude}&current=temperature_2m&timezone=auto`,
+            { cache:"no-store" }
+          );
+          if(wr.ok){
+            const wd = await wr.json() as { current?: { temperature_2m?: number } };
+            if(wd.current?.temperature_2m !== undefined){
+              tempC = wd.current.temperature_2m;
+              tempSource = `${tempC.toFixed(1)}°C (Open-Meteo)`;
+            }
+          }
+        } catch(e) { debugLines.push(`⚠ Wetter-Fehler: ${e}`); }
+      } else {
+        debugLines.push("ℹ Kein Standort → Temperatur-Schätzwert 18°C");
+      }
+      debugLines.push(`Temperatur: ${tempSource} · Multiplikator: ×${tempMultiplier(tempC).toFixed(2)}`);
+
+      // Aktivitäten (via Proxy um CORS zu vermeiden)
+      interface IvAct { type?:string; sport_type?:string; moving_time?:number; icu_training_load?:number; training_load_score?:number; name?:string; }
+      let acts: IvAct[] = [];
+
+      if(settings.ivAthleteId && settings.ivApiKey){
+        try{
+          const path = `/athlete/${settings.ivAthleteId}/activities?oldest=${selDate}&newest=${selDate}`;
+          const data = await ivFetch(path, settings.ivApiKey) as IvAct[];
+          acts = Array.isArray(data) ? data : [];
+          debugLines.push(`Aktivitäten gefunden: ${acts.length}`);
+          acts.forEach(a => {
+            const sport = a.sport_type || a.type || "?";
+            const minStr = Math.round((a.moving_time||0)/60);
+            const load   = a.icu_training_load || a.training_load_score || 0;
+            debugLines.push(`  → ${sport} (${a.name||"–"}): ${minStr}min, Load=${load}`);
+          });
+        } catch(e){
+          debugLines.push(`⚠ IV-API Fehler: ${e}`);
+        }
+      } else {
+        debugLines.push("ℹ Kein IV-API-Key → nur Basis + Temperatur");
+      }
+
+      // Ziel berechnen
+      const newTargets: Record<string,number> = {};
+      const newInfo:    Record<string,string>  = {};
 
       for(const h of waterHabits){
-        let actExtra=0;
-        const actParts:string[]=[];
+        let actExtra = 0;
+        const actParts: string[] = [];
 
         for(const act of acts){
-          const sport     = act.sport_type||act.type||"Workout";
-          const movingH   = (act.moving_time||0)/3600;
-          const load      = act.icu_training_load||act.training_load_score||0;
-          const lph       = movingH > 0 ? load/movingH : 50;
-          const rateL     = getSweatRateL(sport, lph, tempC, hydrationSettings.sweatTests);
-          const extra     = Math.round(rateL*movingH*10)/10;
+          const sport   = act.sport_type || act.type || "Workout";
+          const movingH = (act.moving_time || 0) / 3600;
+          const load    = act.icu_training_load || act.training_load_score || 0;
+          const lph     = movingH > 0 ? load / movingH : 50;
+          const rateL   = getSweatRateL(sport, lph, tempC, hydrationSettings.sweatTests);
+          const extra   = Math.round(rateL * movingH * 10) / 10;
           actExtra += extra;
-          if(extra>0) actParts.push(`${sport} ${Math.round(movingH*60)}min (+${extra.toFixed(1)}L)`);
+          if(extra > 0){
+            actParts.push(
+              `${sport} ${Math.round(movingH*60)}min (+${extra.toFixed(1)}L @ ${rateL.toFixed(2)}L/h)`
+            );
+          }
         }
 
-        /* Temperatur-Basiszuschlag nur wenn kein Workout (sonst bereits in Schweißrate) */
-        const tempBonus = acts.length===0 ? getTempBaseBonus(tempC) : 0;
-        const total     = Math.round((baseWater + actExtra + tempBonus)*10)/10;
+        const tempBonus = acts.length === 0 ? getTempBaseBonus(tempC) : 0;
+        const total     = Math.round((baseWater + actExtra + tempBonus) * 10) / 10;
 
         newTargets[h.id] = total;
 
-        /* Tooltip-Info */
         const baseLabel = hydrationSettings.useWeightBased
           ? `Basis: ${baseWater} L (${hydrationSettings.bodyWeightKg}kg × 35ml)`
           : `Basis: ${baseWater} L (manuell)`;
-        const parts = [baseLabel];
-        if(tempSource!=="Schätzwert") parts.push(`🌡 ${tempSource}`);
-        actParts.forEach(p=>parts.push(`Training: ${p}`));
-        if(tempBonus>0) parts.push(`Ruhetag-Temp: +${tempBonus.toFixed(1)}L`);
+        const parts = [baseLabel, `🌡 ${tempSource}`];
+        actParts.forEach(p => parts.push(`Training: ${p}`));
+        if(tempBonus > 0) parts.push(`Temp-Basiszuschlag: +${tempBonus.toFixed(1)}L`);
         parts.push(`📊 ${calibLabel(hydrationSettings.sweatTests)}`);
         parts.push(`→ Gesamt: ${total} L`);
         newInfo[h.id] = parts.join(" · ");
@@ -430,10 +459,12 @@ export default function HabitsPage() {
 
       setDynamicTargets(newTargets);
       setDynamicInfo(newInfo);
+      setHydrationDebug(debugLines.join("\n"));
     };
 
     run();
-  },[selDate,settings.ivAthleteId,settings.ivApiKey,settings.latitude,settings.longitude,habits,loaded,hydrationSettings]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[selDate, settings.ivAthleteId, settings.ivApiKey, settings.latitude, settings.longitude, habits, loaded, hydrationSettings]);
 
   const today=todayStr(),isToday=selDate===today;
   const day=useMemo(()=>normalizeDay(history[selDate]),[history,selDate]);
@@ -501,7 +532,6 @@ export default function HabitsPage() {
   function dl(name:string,content:string,type:string){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([content],{type}));a.download=name;a.click();}
   const getLocation=()=>{if(!navigator.geolocation)return;navigator.geolocation.getCurrentPosition(pos=>{setSettings(s=>({...s,latitude:Math.round(pos.coords.latitude*1000)/1000,longitude:Math.round(pos.coords.longitude*1000)/1000}));});};
 
-  /* Hilfsfunktion: Schweißraten-Test-Feld updaten */
   const setSweatTest = (key: keyof HydrationSettings["sweatTests"], val: string) => {
     const n = parseFloat(val);
     setHydrationSettings(prev => ({
@@ -510,12 +540,7 @@ export default function HabitsPage() {
     }));
   };
 
-  const syncIndicator = {
-    idle:    "",
-    saving:  "Speichern…",
-    saved:   "✓ Gespeichert",
-    offline: "⚠ Offline (lokal)",
-  }[syncState];
+  const syncIndicator = { idle:"", saving:"Speichern…", saved:"✓ Gespeichert", offline:"⚠ Offline (lokal)" }[syncState];
 
   if(!loaded)return<div className="p-6 text-dash-muted text-sm animate-pulse">Lade Habits…</div>;
 
@@ -581,7 +606,7 @@ export default function HabitsPage() {
                       <button onClick={()=>setNum(hb.id,Math.round(((numVal??0)*10+5))/10)} className="w-7 h-7 rounded-lg border border-dash-border text-dash-muted hover:text-white text-base flex items-center justify-center transition-colors">+</button>
                       <span className="text-[11px] text-dash-muted whitespace-nowrap">
                         /{effectiveTarget} {hb.unit}
-                        {isDynamic&&<span className="ml-1 text-indigo-300 cursor-help relative group/tip" title={dynamicInfo[hb.id]??""}> ⚡<span className="absolute right-0 bottom-5 z-10 hidden group-hover/tip:block w-64 bg-[#131929] border border-dash-border rounded-xl p-2 text-[10px] text-dash-muted leading-relaxed shadow-xl">{(dynamicInfo[hb.id]??"").split(" · ").map((p,i)=><span key={i} className="block">{p}</span>)}</span></span>}
+                        {isDynamic&&<span className="ml-1 text-indigo-300 cursor-help relative group/tip"> ⚡<span className="absolute right-0 bottom-5 z-10 hidden group-hover/tip:block w-72 bg-[#131929] border border-dash-border rounded-xl p-2 text-[10px] text-dash-muted leading-relaxed shadow-xl">{(dynamicInfo[hb.id]??"").split(" · ").map((p,i)=><span key={i} className="block">{p}</span>)}</span></span>}
                       </span>
                     </div>
                     {isLUnit&&(<div className="flex gap-1">{VESSEL_SIZES.map(amt=>(<button key={amt} onClick={()=>setNum(hb.id,Math.round(((numVal??0)+amt)*10)/10)} className="text-[10px] px-2 py-0.5 rounded-lg border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/40 transition-colors">+{amt*1000}ml</button>))}</div>)}
@@ -682,13 +707,10 @@ export default function HabitsPage() {
         {tab==="settings"&&(<>
           <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
             <p className="text-sm font-semibold text-white">Datenspeicherung</p>
-            <p className="text-xs text-dash-muted leading-relaxed">
-              Daten werden <strong className="text-white">server-seitig</strong> als JSON gespeichert und sind auf allen Geräten verfügbar.
-              Beim Laden wird immer zuerst der Server abgefragt. localStorage dient als Offline-Cache.
-            </p>
+            <p className="text-xs text-dash-muted leading-relaxed">Daten werden <strong className="text-white">server-seitig</strong> als JSON gespeichert. localStorage dient als Offline-Cache.</p>
             <div className="flex items-center gap-3">
-              <span className={clsx("text-xs px-3 py-1.5 rounded-xl border", syncState==="saved"?"border-emerald-500/30 text-emerald-400 bg-emerald-500/5":syncState==="offline"?"border-yellow-500/30 text-yellow-400 bg-yellow-500/5":"border-dash-border text-dash-muted")}>
-                {syncState==="saved"?"✓ Mit Server synchronisiert":syncState==="offline"?"⚠ Server nicht erreichbar (Offline-Modus)":syncState==="saving"?"Speichern…":"–"}
+              <span className={clsx("text-xs px-3 py-1.5 rounded-xl border",syncState==="saved"?"border-emerald-500/30 text-emerald-400 bg-emerald-500/5":syncState==="offline"?"border-yellow-500/30 text-yellow-400 bg-yellow-500/5":"border-dash-border text-dash-muted")}>
+                {syncState==="saved"?"✓ Synchronisiert":syncState==="offline"?"⚠ Offline":syncState==="saving"?"Speichern…":"–"}
               </span>
               <button onClick={async()=>{const d=await loadFromServer();if(d){if(d.habits)setHabits(d.habits);if(d.history){const norm:History={};for(const[k,v]of Object.entries(d.history))norm[k]=normalizeDay(v);setHistory(norm);}setSyncState("saved");}}} className="text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors flex items-center gap-1"><RefreshCw size={11}/> Neu laden</button>
             </div>
@@ -696,12 +718,12 @@ export default function HabitsPage() {
 
           <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
             <p className="text-sm font-semibold text-white">intervals.icu Wellness-Sync</p>
-            <p className="text-xs text-dash-muted leading-relaxed">Habits → Tags + Kommentar · Mood → <code className="text-indigo-300 text-[10px]">motivation</code>. Wasserziel wird dynamisch berechnet: Sportart × Intensität × Temperatur.</p>
+            <p className="text-xs text-dash-muted leading-relaxed">Habits → Tags · Mood → <code className="text-indigo-300 text-[10px]">motivation</code> · Wasserziel dynamisch via Proxy (kein CORS).</p>
             <div><label className="text-[11px] text-dash-muted block mb-1">Athleten-ID</label><input type="text" value={settings.ivAthleteId} onChange={e=>setSettings(s=>({...s,ivAthleteId:e.target.value}))} placeholder="i12345" className="w-40 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
             <div><label className="text-[11px] text-dash-muted block mb-1">API-Key</label><input type="password" value={settings.ivApiKey} onChange={e=>setSettings(s=>({...s,ivApiKey:e.target.value}))} placeholder="••••••••" className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
             <div className="flex items-center gap-3 flex-wrap">
-              <button onClick={async()=>{setSyncMsg("Synchronisiere…");const ok=await doSync(today);setSyncMsg(ok?`✓ Sync: ${new Date().toLocaleString("de-DE")}`:"✗ Fehlgeschlagen");}} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><RefreshCw size={12}/> Jetzt synchronisieren</button>
-              <label className="flex items-center gap-2 text-xs text-dash-muted cursor-pointer"><input type="checkbox" checked={settings.autoSync} onChange={e=>setSettings(s=>({...s,autoSync:e.target.checked}))}/>Täglich um <input type="time" value={settings.notifTime} onChange={e=>setSettings(s=>({...s,notifTime:e.target.value}))} className="w-24 px-2 py-1 text-xs bg-dash-bg border border-dash-border rounded-lg text-white focus:outline-none focus:border-indigo-500"/> Uhr</label>
+              <button onClick={async()=>{setSyncMsg("Synchronisiere…");const ok=await doSync(today);setSyncMsg(ok?`✓ ${new Date().toLocaleString("de-DE")}`:"✗ Fehlgeschlagen");}} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><RefreshCw size={12}/> Jetzt sync</button>
+              <label className="flex items-center gap-2 text-xs text-dash-muted cursor-pointer"><input type="checkbox" checked={settings.autoSync} onChange={e=>setSettings(s=>({...s,autoSync:e.target.checked}))}/>Auto um <input type="time" value={settings.notifTime} onChange={e=>setSettings(s=>({...s,notifTime:e.target.value}))} className="w-20 px-2 py-1 text-xs bg-dash-bg border border-dash-border rounded-lg text-white focus:outline-none focus:border-indigo-500"/> Uhr</label>
             </div>
             {syncMsg&&<p className="text-[11px] text-dash-muted">{syncMsg}</p>}
             {settings.lastSync&&<p className="text-[11px] text-dash-muted/50">Letzter Sync: {new Date(settings.lastSync).toLocaleString("de-DE")}</p>}
@@ -711,40 +733,30 @@ export default function HabitsPage() {
           <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-4">
             <div>
               <p className="text-sm font-semibold text-white">Hydration & Schweißraten-Tests</p>
-              <p className="text-xs text-dash-muted mt-1 leading-relaxed">
-                Basis + persönliche Testwerte → präziseres Tagesziel als generische Tabellen.
-                Gespeichert nur lokal (gerätespezifisch).
-              </p>
+              <p className="text-xs text-dash-muted mt-1">Personalisierte Berechnung · lokal gespeichert</p>
             </div>
 
-            {/* Basis-Wasserbedarf */}
             <div className="space-y-2">
               <p className="text-[11px] text-dash-muted uppercase tracking-wider font-medium">Basis-Wasserbedarf</p>
               <div className="flex items-center gap-3 flex-wrap">
                 <label className="flex items-center gap-2 text-xs text-dash-muted cursor-pointer">
-                  <input type="radio" name="waterbase" checked={hydrationSettings.useWeightBased} onChange={()=>setHydrationSettings(p=>({...p,useWeightBased:true}))}/>
-                  Gewichtsbasiert
+                  <input type="radio" name="waterbase" checked={hydrationSettings.useWeightBased} onChange={()=>setHydrationSettings(p=>({...p,useWeightBased:true}))}/>Gewichtsbasiert
                 </label>
                 <label className="flex items-center gap-2 text-xs text-dash-muted cursor-pointer">
-                  <input type="radio" name="waterbase" checked={!hydrationSettings.useWeightBased} onChange={()=>setHydrationSettings(p=>({...p,useWeightBased:false}))}/>
-                  Manuell
+                  <input type="radio" name="waterbase" checked={!hydrationSettings.useWeightBased} onChange={()=>setHydrationSettings(p=>({...p,useWeightBased:false}))}/>Manuell
                 </label>
               </div>
               {hydrationSettings.useWeightBased ? (
                 <div className="flex items-center gap-2">
-                  <input type="number" min="40" max="200" step="0.5"
-                    value={hydrationSettings.bodyWeightKg}
+                  <input type="number" min="40" max="200" step="0.5" value={hydrationSettings.bodyWeightKg}
                     onChange={e=>setHydrationSettings(p=>({...p,bodyWeightKg:parseFloat(e.target.value)||75}))}
                     className="w-20 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/>
                   <span className="text-xs text-dash-muted">kg</span>
-                  <span className="text-xs text-indigo-300 ml-1">
-                    = {Math.round(hydrationSettings.bodyWeightKg * 0.035 * 10) / 10} L/Tag Basis
-                  </span>
+                  <span className="text-xs text-indigo-300 ml-1">= {Math.round(hydrationSettings.bodyWeightKg*0.035*10)/10} L Basis</span>
                 </div>
               ) : (
                 <div className="flex items-center gap-2">
-                  <input type="number" min="1" max="6" step="0.1"
-                    value={hydrationSettings.baseWaterL}
+                  <input type="number" min="1" max="6" step="0.1" value={hydrationSettings.baseWaterL}
                     onChange={e=>setHydrationSettings(p=>({...p,baseWaterL:parseFloat(e.target.value)||2.6}))}
                     className="w-20 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/>
                   <span className="text-xs text-dash-muted">L/Tag</span>
@@ -752,90 +764,55 @@ export default function HabitsPage() {
               )}
             </div>
 
-            {/* Schweißraten-Tests */}
             <div className="space-y-3">
               <p className="text-[11px] text-dash-muted uppercase tracking-wider font-medium">Schweißraten-Tests</p>
-              <p className="text-[10px] text-dash-muted/70 leading-relaxed">
-                Berechnung: (Gewicht vorher − nachher) × 1000 + getrunkene ml ÷ Dauer (h) = ml/h
-              </p>
-
-              {/* Test: Outdoor ~24°C */}
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <p className="text-xs text-white">Outdoor ~24°C</p>
-                  <p className="text-[10px] text-dash-muted">Straße / Gravel bei normaler Sommertemperatur</p>
+              <p className="text-[10px] text-dash-muted/70">Formel: (kg vorher − nachher) × 1000 + ml getrunken ÷ Stunden = ml/h</p>
+              {([
+                { key:"outdoor24" as const, label:"Outdoor ~24°C",  sub:"Straße / Gravel normal" },
+                { key:"outdoor28" as const, label:"Outdoor >28°C",  sub:"Straße / Gravel Hitze — ausstehend" },
+                { key:"rolle"     as const, label:"Rolle / Zwift",  sub:"Indoor — temperaturunabhängig" },
+              ]).map(({key,label,sub})=>(
+                <div key={key} className="flex items-center gap-3">
+                  <div className="flex-1"><p className="text-xs text-white">{label}</p><p className="text-[10px] text-dash-muted">{sub}</p></div>
+                  <div className="flex items-center gap-2">
+                    <input type="number" min="200" max="3000" step="10"
+                      value={hydrationSettings.sweatTests[key] ?? ""}
+                      placeholder="—"
+                      onChange={e=>setSweatTest(key, e.target.value)}
+                      className="w-20 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white text-right focus:outline-none focus:border-indigo-500 transition-colors tabular-nums"/>
+                    <span className="text-[11px] text-dash-muted w-8">ml/h</span>
+                    <span className="text-base">{hydrationSettings.sweatTests[key] ? "✅" : "⏳"}</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <input type="number" min="200" max="3000" step="10"
-                    value={hydrationSettings.sweatTests.outdoor24 ?? ""}
-                    placeholder="—"
-                    onChange={e=>setSweatTest("outdoor24", e.target.value)}
-                    className="w-20 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white text-right focus:outline-none focus:border-indigo-500 transition-colors tabular-nums"/>
-                  <span className="text-[11px] text-dash-muted w-8">ml/h</span>
-                  <span className="text-base">{hydrationSettings.sweatTests.outdoor24 ? "✅" : "⏳"}</span>
-                </div>
-              </div>
-
-              {/* Test: Outdoor >28°C */}
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <p className="text-xs text-white">Outdoor &gt;28°C</p>
-                  <p className="text-[10px] text-dash-muted">Straße / Gravel bei Hitze — ausstehend</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input type="number" min="200" max="3000" step="10"
-                    value={hydrationSettings.sweatTests.outdoor28 ?? ""}
-                    placeholder="—"
-                    onChange={e=>setSweatTest("outdoor28", e.target.value)}
-                    className="w-20 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white text-right focus:outline-none focus:border-indigo-500 transition-colors tabular-nums"/>
-                  <span className="text-[11px] text-dash-muted w-8">ml/h</span>
-                  <span className="text-base">{hydrationSettings.sweatTests.outdoor28 ? "✅" : "⏳"}</span>
-                </div>
-              </div>
-
-              {/* Test: Rolle / Zwift */}
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <p className="text-xs text-white">Rolle / Zwift (indoor)</p>
-                  <p className="text-[10px] text-dash-muted">Kein Fahrtwind → eigene Rate, temperaturunabhängig</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input type="number" min="200" max="3000" step="10"
-                    value={hydrationSettings.sweatTests.rolle ?? ""}
-                    placeholder="—"
-                    onChange={e=>setSweatTest("rolle", e.target.value)}
-                    className="w-20 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white text-right focus:outline-none focus:border-indigo-500 transition-colors tabular-nums"/>
-                  <span className="text-[11px] text-dash-muted w-8">ml/h</span>
-                  <span className="text-base">{hydrationSettings.sweatTests.rolle ? "✅" : "⏳"}</span>
-                </div>
-              </div>
-
-              {/* Kalibrierungsstatus */}
+              ))}
               <div className="flex items-center gap-2 pt-1">
                 <span className={clsx("text-[10px] px-2 py-1 rounded-lg border",
-                  hydrationSettings.sweatTests.outdoor24 && hydrationSettings.sweatTests.outdoor28 && hydrationSettings.sweatTests.rolle
-                    ? "border-emerald-500/30 text-emerald-400 bg-emerald-500/5"
-                    : hydrationSettings.sweatTests.outdoor24
-                    ? "border-indigo-500/30 text-indigo-300 bg-indigo-500/5"
-                    : "border-dash-border text-dash-muted"
-                )}>
-                  📊 {calibLabel(hydrationSettings.sweatTests)}
-                </span>
-                <button
-                  onClick={()=>setHydrationSettings(p=>({...p,sweatTests:{outdoor24:null,outdoor28:null,rolle:null}}))}
-                  className="text-[10px] px-2 py-1 rounded-lg border border-dash-border text-dash-muted hover:text-red-400 hover:border-red-500/30 transition-colors">
-                  Zurücksetzen
-                </button>
+                  hydrationSettings.sweatTests.outdoor24&&hydrationSettings.sweatTests.outdoor28&&hydrationSettings.sweatTests.rolle
+                    ?"border-emerald-500/30 text-emerald-400 bg-emerald-500/5"
+                    :hydrationSettings.sweatTests.outdoor24
+                    ?"border-indigo-500/30 text-indigo-300 bg-indigo-500/5"
+                    :"border-dash-border text-dash-muted"
+                )}>📊 {calibLabel(hydrationSettings.sweatTests)}</span>
+                <button onClick={()=>setHydrationSettings(p=>({...p,sweatTests:{outdoor24:null,outdoor28:null,rolle:null}}))}
+                  className="text-[10px] px-2 py-1 rounded-lg border border-dash-border text-dash-muted hover:text-red-400 hover:border-red-500/30 transition-colors">Zurücksetzen</button>
               </div>
             </div>
+
+            {/* Debug-Panel */}
+            {hydrationDebug && (
+              <div className="space-y-1">
+                <p className="text-[11px] text-dash-muted uppercase tracking-wider font-medium">Letzter Berechnungs-Log</p>
+                <pre className="text-[10px] text-dash-muted/70 bg-dash-bg rounded-xl p-3 border border-dash-border overflow-x-auto leading-relaxed whitespace-pre-wrap">{hydrationDebug}</pre>
+              </div>
+            )}
           </div>
 
           <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
-            <p className="text-sm font-semibold text-white">Standort (Temperaturanpassung)</p>
-            <p className="text-xs text-dash-muted">Wird via Open-Meteo abgerufen und als Multiplikator auf die Schweißrate angewendet (nicht als Flatbetrag).</p>
+            <p className="text-sm font-semibold text-white">Standort (Temperatur)</p>
+            <p className="text-xs text-dash-muted">Temperatur wird als Multiplikator auf die Schweißrate angewendet, nicht als Flatbetrag.</p>
             <div><label className="text-[11px] text-dash-muted block mb-1">Ortsname</label><input type="text" value={settings.locationName} onChange={e=>setSettings(s=>({...s,locationName:e.target.value}))} placeholder="z. B. Borken" className="w-48 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
             <div className="flex items-center gap-3 flex-wrap">
-              <button onClick={getLocation} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><MapPin size={12}/> Standort automatisch ermitteln</button>
+              <button onClick={getLocation} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><MapPin size={12}/> Standort ermitteln</button>
               {settings.latitude!==null&&<span className="text-[11px] text-dash-muted">✓ {settings.latitude?.toFixed(3)}, {settings.longitude?.toFixed(3)}</span>}
             </div>
           </div>
