@@ -368,11 +368,12 @@ export default function HabitsPage() {
     const run = async () => {
       const debugLines: string[] = [];
 
-      // Basis-Wasserbedarf
-      const baseWater = hydrationSettings.useWeightBased
+      // Basis-Wasserbedarf: immer mindestens der Habit-Zielwert (numTarget).
+      // Die Gewichts-/Manualberechnung dient nur als Referenz im Tooltip,
+      // kann den vom Nutzer gesetzten Wert aber nicht unterschreiten.
+      const weightBase = hydrationSettings.useWeightBased
         ? Math.round(hydrationSettings.bodyWeightKg * 0.035 * 10) / 10
         : hydrationSettings.baseWaterL;
-      debugLines.push(`Basis: ${baseWater} L`);
 
       // Temperatur (Open-Meteo)
       let tempC = 18, tempSource = "Schätzwert (18°C)";
@@ -393,6 +394,7 @@ export default function HabitsPage() {
       } else {
         debugLines.push("ℹ Kein Standort → Temperatur-Schätzwert 18°C");
       }
+      debugLines.push(`Gewichts-Basis: ${weightBase} L · wird nur genutzt wenn > Habit-Zielwert`);
       debugLines.push(`Temperatur: ${tempSource} · Multiplikator: ×${tempMultiplier(tempC).toFixed(2)}`);
 
       // Aktivitäten (via Proxy um CORS zu vermeiden)
@@ -442,19 +444,21 @@ export default function HabitsPage() {
         }
 
         const tempBonus = acts.length === 0 ? getTempBaseBonus(tempC) : 0;
+        // Basis ist immer mindestens der gesetzte Habit-Zielwert (numTarget).
+        // Dynamisches Ziel nur setzen wenn es den Basis-Wert überschreitet.
+        const baseWater = Math.max(h.numTarget, weightBase);
         const total     = Math.round((baseWater + actExtra + tempBonus) * 10) / 10;
 
-        newTargets[h.id] = total;
+        // Nur anzeigen wenn wirklich höher als Standardziel
+        if (total > h.numTarget) newTargets[h.id] = total;
 
-        const baseLabel = hydrationSettings.useWeightBased
-          ? `Basis: ${baseWater} L (${hydrationSettings.bodyWeightKg}kg × 35ml)`
-          : `Basis: ${baseWater} L (manuell)`;
+        const baseLabel = `Basis: ${baseWater} L (Habit: ${h.numTarget} L${weightBase > h.numTarget ? `, Gewicht: ${weightBase} L` : ""})`;
         const parts = [baseLabel, `🌡 ${tempSource}`];
         actParts.forEach(p => parts.push(`Training: ${p}`));
         if(tempBonus > 0) parts.push(`Temp-Basiszuschlag: +${tempBonus.toFixed(1)}L`);
         parts.push(`📊 ${calibLabel(hydrationSettings.sweatTests)}`);
         parts.push(`→ Gesamt: ${total} L`);
-        newInfo[h.id] = parts.join(" · ");
+        if (total > h.numTarget) newInfo[h.id] = parts.join(" · ");
       }
 
       setDynamicTargets(newTargets);
@@ -530,7 +534,26 @@ export default function HabitsPage() {
   };
   const exportJSON=()=>dl(`habits-${today}.json`,JSON.stringify({habits,history},null,2),"application/json");
   function dl(name:string,content:string,type:string){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([content],{type}));a.download=name;a.click();}
-  const getLocation=()=>{if(!navigator.geolocation)return;navigator.geolocation.getCurrentPosition(pos=>{setSettings(s=>({...s,latitude:Math.round(pos.coords.latitude*1000)/1000,longitude:Math.round(pos.coords.longitude*1000)/1000}));});};
+  const geocodeLocation = async () => {
+    const name = settings.locationName.trim();
+    if (!name) return;
+    try {
+      const res = await fetch(
+        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=1&language=de&format=json`
+      );
+      if (!res.ok) return;
+      const data = await res.json() as { results?: { latitude: number; longitude: number; name: string; country: string }[] };
+      const r = data.results?.[0];
+      if (r) {
+        setSettings(s => ({
+          ...s,
+          latitude:     Math.round(r.latitude  * 1000) / 1000,
+          longitude:    Math.round(r.longitude * 1000) / 1000,
+          locationName: `${r.name}, ${r.country}`,
+        }));
+      }
+    } catch { /* silent */ }
+  };
 
   const setSweatTest = (key: keyof HydrationSettings["sweatTests"], val: string) => {
     const n = parseFloat(val);
@@ -809,12 +832,22 @@ export default function HabitsPage() {
 
           <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
             <p className="text-sm font-semibold text-white">Standort (Temperatur)</p>
-            <p className="text-xs text-dash-muted">Temperatur wird als Multiplikator auf die Schweißrate angewendet, nicht als Flatbetrag.</p>
-            <div><label className="text-[11px] text-dash-muted block mb-1">Ortsname</label><input type="text" value={settings.locationName} onChange={e=>setSettings(s=>({...s,locationName:e.target.value}))} placeholder="z. B. Borken" className="w-48 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
-            <div className="flex items-center gap-3 flex-wrap">
-              <button onClick={getLocation} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><MapPin size={12}/> Standort ermitteln</button>
-              {settings.latitude!==null&&<span className="text-[11px] text-dash-muted">✓ {settings.latitude?.toFixed(3)}, {settings.longitude?.toFixed(3)}</span>}
+            <p className="text-xs text-dash-muted">Ortsname eingeben → suchen. Kein GPS nötig.</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input type="text" value={settings.locationName}
+                onChange={e=>setSettings(s=>({...s,locationName:e.target.value}))}
+                onKeyDown={async e=>{if(e.key==="Enter")await geocodeLocation();}}
+                placeholder="z. B. Coesfeld"
+                className="w-48 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/>
+              <button onClick={geocodeLocation}
+                className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors">
+                <MapPin size={12}/> Suchen
+              </button>
             </div>
+            {settings.latitude!==null
+              ? <span className="text-[11px] text-emerald-400">✓ {settings.locationName} ({settings.latitude?.toFixed(3)}, {settings.longitude?.toFixed(3)})</span>
+              : <span className="text-[11px] text-dash-muted/50">Noch kein Standort gesetzt</span>
+            }
           </div>
 
           <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
