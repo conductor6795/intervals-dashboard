@@ -29,6 +29,24 @@ interface HabitSettings {
   latitude: number | null; longitude: number | null; locationName: string;
 }
 
+/* ── Hydration-Einstellungen (localStorage: ht_hydration) ── */
+interface HydrationSettings {
+  bodyWeightKg: number;
+  useWeightBased: boolean;
+  baseWaterL: number;
+  sweatTests: {
+    outdoor24: number | null;   // ml/h bei ~24°C outdoor
+    outdoor28: number | null;   // ml/h bei >28°C outdoor
+    rolle: number | null;        // ml/h auf der Rolle / Zwift
+  };
+}
+const DEFAULT_HYDRATION: HydrationSettings = {
+  bodyWeightKg: 75,
+  useWeightBased: true,
+  baseWaterL: 2.6,
+  sweatTests: { outdoor24: null, outdoor28: null, rolle: null },
+};
+
 const DEFAULTS: Habit[] = [
   { id:"h1", name:"4L Wasser",    emoji:"💧", color:"#3b82f6", habitType:"numeric",  unit:"L",  numTarget:4, goalType:"daily",       goalValue:1  },
   { id:"h2", name:"Alkohol",      emoji:"🍺", color:"#ef4444", habitType:"checkbox", unit:"",   numTarget:0, goalType:"max_per_days", goalValue:14 },
@@ -50,29 +68,94 @@ const MOOD_COLORS   = ["transparent","#ef4444","#f59e0b","#94a3b8","#3b82f6","#1
 const GRID_COL      = { display:"grid", gridTemplateColumns:"repeat(7, 16px)", gap:"3px" } as const;
 const VESSEL_SIZES  = [0.2, 0.3, 0.7];
 
-/* ── Schweißraten nach Sportart (L/h) — ACSM / Gatorade Sports Science Institute ── */
+/* ══════════════════════════════════════
+   HYDRATION — Wissenschaftlich korrigierte Formeln
+   Quellen: ACSM, Journal of Applied Physiology (2024), Gatorade SSI
+══════════════════════════════════════ */
+
+/* Basis-Schweißraten nach Sportart (L/h) bei ~22°C, moderater Intensität.
+   Zwift / VirtualRide höher als outdoor: kein Fahrtwind → schlechtere Verdunstung → mehr Schweiß. */
 const SWEAT_RATES: Record<string, number> = {
-  Run:1.0, VirtualRun:0.9, TrailRun:1.1,
-  Ride:0.8, VirtualRide:0.95, MountainBikeRide:0.9, GravelRide:0.85,
-  Swim:0.35, Walk:0.45, Hike:0.55,
-  WeightTraining:0.6, Workout:0.65, Crossfit:0.8,
-  Soccer:1.0, Basketball:0.9, Tennis:0.75, Rowing:0.85,
+  Run: 1.0, VirtualRun: 1.1, TrailRun: 1.1,
+  Ride: 0.8, VirtualRide: 1.1, MountainBikeRide: 0.9, GravelRide: 0.85,
+  Swim: 0.35, Walk: 0.45, Hike: 0.55,
+  WeightTraining: 0.6, Workout: 0.65, Crossfit: 0.8,
+  Soccer: 1.0, Basketball: 0.9, Tennis: 0.75, Rowing: 0.85,
 };
-function getSweatRateL(type: string, loadPerHour: number): number {
-  const base = SWEAT_RATES[type] ?? 0.7;
-  let f = 1.0;
-  if      (loadPerHour < 30)  f = 0.70;
-  else if (loadPerHour < 70)  f = 1.00;
-  else if (loadPerHour < 120) f = 1.20;
-  else                        f = 1.40;
-  return base * f;
-}
-function getTempExtra(tempC: number): number {
-  if (tempC < 15) return 0; if (tempC < 20) return 0.1;
-  if (tempC < 25) return 0.3; if (tempC < 30) return 0.6;
-  if (tempC < 35) return 0.9; return 1.2;
+
+/* Kontinuierlicher Temperaturmultiplikator (keine Stufensprünge).
+   Über 30°C steil, basierend auf Studiendaten (4× Anstieg von 31→34°C). */
+function tempMultiplier(tempC: number): number {
+  if (tempC <= 10) return 0.50;
+  if (tempC <= 20) return 0.50 + (tempC - 10) * 0.025;   // 0.50 → 0.75
+  if (tempC <= 25) return 0.75 + (tempC - 20) * 0.05;    // 0.75 → 1.00
+  if (tempC <= 30) return 1.00 + (tempC - 25) * 0.10;    // 1.00 → 1.50
+  if (tempC <= 35) return 1.50 + (tempC - 30) * 0.30;    // 1.50 → 3.00
+  return 3.00 + (tempC - 35) * 0.20;                     // 3.00+
 }
 
+/* Kontinuierlicher Intensitätsfaktor aus Load/h-Wert. */
+function intensityFactor(loadPerHour: number): number {
+  if (loadPerHour <= 30)  return 0.70;
+  if (loadPerHour <= 70)  return 0.70 + (loadPerHour - 30)  / 40  * 0.30;
+  if (loadPerHour <= 120) return 1.00 + (loadPerHour - 70)  / 50  * 0.25;
+  if (loadPerHour <= 200) return 1.25 + (loadPerHour - 120) / 80  * 0.25;
+  return Math.min(1.75 + (loadPerHour - 200) / 100 * 0.25, 2.0);
+}
+
+/* Kleiner Temperatur-Basiszuschlag für Tage ohne Workout (Hintergrundverlust). */
+function getTempBaseBonus(tempC: number): number {
+  if (tempC < 20) return 0.0;
+  if (tempC < 25) return 0.1;
+  if (tempC < 30) return 0.2;
+  if (tempC < 35) return 0.3;
+  return 0.5;
+}
+
+/* Schweißrate in L/h — nutzt persönliche Tests wenn vorhanden, sonst generische Werte.
+   Temperatur ist Multiplikator auf die Rate (nicht seperater Zuschlag). */
+function getSweatRateL(
+  type: string,
+  loadPerHour: number,
+  tempC: number,
+  tests: HydrationSettings["sweatTests"],
+): number {
+  const isIndoor = type === "VirtualRide" || type === "VirtualRun";
+  const lf = intensityFactor(loadPerHour);
+
+  // Rolle/Zwift → eigener Testwert, kein Temperatureffekt (indoor)
+  if (isIndoor && tests.rolle !== null) {
+    return (tests.rolle / 1000) * lf;
+  }
+
+  // Beide Outdoor-Tests → lineare Interpolation
+  if (tests.outdoor24 !== null && tests.outdoor28 !== null) {
+    const slope = (tests.outdoor28 - tests.outdoor24) / (28 - 24);
+    const rateMlH = tests.outdoor24 + slope * (tempC - 24);
+    return (Math.max(300, rateMlH) / 1000) * lf;
+  }
+
+  // Nur 24°C-Test → Extrapolation mit Temperaturkurve
+  if (tests.outdoor24 !== null) {
+    const rateMlH = tests.outdoor24 * tempMultiplier(tempC) / tempMultiplier(24);
+    return (Math.max(300, rateMlH) / 1000) * lf;
+  }
+
+  // Kein Test → generische Tabellenwerte
+  const base = SWEAT_RATES[type] ?? 0.7;
+  return base * tempMultiplier(tempC) * lf;
+}
+
+/* Kalibrierungsstatus für den ⚡-Tooltip. */
+function calibLabel(tests: HydrationSettings["sweatTests"]): string {
+  const { outdoor24, outdoor28, rolle } = tests;
+  if (outdoor24 && outdoor28 && rolle) return "vollständig kalibriert";
+  if (outdoor24 && outdoor28)          return "kalibriert (2 Tests, interpoliert)";
+  if (outdoor24)                       return "kalibriert (1 Test, extrapoliert)";
+  return "Schätzwerte (kein Test)";
+}
+
+/* ─────────────── Utils ─────────────── */
 function toDS(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
@@ -158,8 +241,6 @@ function HabitGrid({ habit, history, today, onToggle }: {
 
 /* ══════════════════════════════════════
    SERVER SYNC HELPERS
-   Primär: /api/habits (JSON auf Server)
-   Fallback: localStorage (offline)
 ══════════════════════════════════════ */
 async function loadFromServer(): Promise<{habits?:Habit[];history?:History;settings?:Partial<HabitSettings>}|null> {
   try {
@@ -184,30 +265,37 @@ async function saveToServer(habits: Habit[], history: History, settings: HabitSe
 
 /* ══ MAIN PAGE ══ */
 export default function HabitsPage() {
-  const [habits,         setHabits]         = useState<Habit[]>([]);
-  const [history,        setHistory]        = useState<History>({});
-  const [settings,       setSettings]       = useState<HabitSettings>({
+  const [habits,            setHabits]            = useState<Habit[]>([]);
+  const [history,           setHistory]           = useState<History>({});
+  const [settings,          setSettings]          = useState<HabitSettings>({
     ivAthleteId:"", ivApiKey:"", notifEnabled:false, notifTime:"22:00",
     autoSync:false, lastSync:null, latitude:null, longitude:null, locationName:"",
   });
-  const [dynamicTargets, setDynamicTargets] = useState<Record<string,number>>({});
-  const [dynamicInfo,    setDynamicInfo]    = useState<Record<string,string>>({});
-  const [tab,            setTab]            = useState<Tab>("today");
-  const [statsSub,       setStatsSub]       = useState<"stats"|"corr">("stats");
-  const [statsPeriod,    setStatsPeriod]    = useState<Period>("4w");
-  const [selDate,        setSelDate]        = useState(todayStr());
-  const [form,           setForm]           = useState<(Partial<Habit>&{error?:string})|null>(null);
-  const [delId,          setDelId]          = useState<string|null>(null);
-  const [syncMsg,        setSyncMsg]        = useState("");
-  const [loaded,         setLoaded]         = useState(false);
-  const [syncState,      setSyncState]      = useState<"idle"|"saving"|"saved"|"offline">("idle");
+  const [hydrationSettings, setHydrationSettings] = useState<HydrationSettings>(DEFAULT_HYDRATION);
+  const [dynamicTargets,    setDynamicTargets]    = useState<Record<string,number>>({});
+  const [dynamicInfo,       setDynamicInfo]       = useState<Record<string,string>>({});
+  const [tab,               setTab]               = useState<Tab>("today");
+  const [statsSub,          setStatsSub]          = useState<"stats"|"corr">("stats");
+  const [statsPeriod,       setStatsPeriod]       = useState<Period>("4w");
+  const [selDate,           setSelDate]           = useState(todayStr());
+  const [form,              setForm]              = useState<(Partial<Habit>&{error?:string})|null>(null);
+  const [delId,             setDelId]             = useState<string|null>(null);
+  const [syncMsg,           setSyncMsg]           = useState("");
+  const [loaded,            setLoaded]            = useState(false);
+  const [syncState,         setSyncState]         = useState<"idle"|"saving"|"saved"|"offline">("idle");
 
   const saveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   /* ── Laden: Server → localStorage Fallback ── */
   useEffect(()=>{
     const load = async () => {
-      // 1. Primär: von Server laden
+      // Hydration-Einstellungen (nur localStorage, gerätespezifisch)
+      try {
+        const h = JSON.parse(localStorage.getItem("ht_hydration") || "null");
+        if (h) setHydrationSettings(prev => ({ ...prev, ...h, sweatTests: { ...prev.sweatTests, ...h.sweatTests } }));
+      } catch {}
+
+      // Primär: von Server laden
       const serverData = await loadFromServer();
       if (serverData) {
         if (serverData.habits)   setHabits(serverData.habits);
@@ -218,13 +306,12 @@ export default function HabitsPage() {
           setHistory(norm);
         }
         if (serverData.settings) setSettings(p=>({...p,...serverData.settings}));
-        // Server-Daten auch in localStorage cachen
         if (serverData.habits)   localStorage.setItem("ht_habits",   JSON.stringify(serverData.habits));
         if (serverData.history)  localStorage.setItem("ht_history",  JSON.stringify(serverData.history));
         if (serverData.settings) localStorage.setItem("ht_settings", JSON.stringify(serverData.settings));
         setSyncState("saved");
       } else {
-        // 2. Fallback: localStorage (offline oder erster Start)
+        // Fallback: localStorage
         try { setHabits(JSON.parse(localStorage.getItem("ht_habits")||"null")??DEFAULTS); } catch { setHabits(DEFAULTS); }
         try {
           const raw=JSON.parse(localStorage.getItem("ht_history")||"{}") as Record<string,unknown>;
@@ -240,14 +327,12 @@ export default function HabitsPage() {
     load();
   },[]);
 
-  /* ── Speichern: localStorage sofort + Server debounced (800ms) ── */
+  /* ── Speichern: localStorage sofort + Server debounced ── */
   useEffect(()=>{
     if (!loaded) return;
-    // Sofort in localStorage
     localStorage.setItem("ht_habits",   JSON.stringify(habits));
     localStorage.setItem("ht_history",  JSON.stringify(history));
     localStorage.setItem("ht_settings", JSON.stringify(settings));
-    // Debounced auf Server
     clearTimeout(saveTimer.current);
     setSyncState("saving");
     saveTimer.current = setTimeout(async () => {
@@ -255,6 +340,12 @@ export default function HabitsPage() {
       setSyncState(ok ? "saved" : "offline");
     }, 800);
   },[habits, history, settings, loaded]);
+
+  /* ── Hydration-Einstellungen in localStorage speichern ── */
+  useEffect(()=>{
+    if (!loaded) return;
+    localStorage.setItem("ht_hydration", JSON.stringify(hydrationSettings));
+  },[hydrationSettings, loaded]);
 
   /* ── Notifications ── */
   useEffect(()=>{
@@ -271,45 +362,78 @@ export default function HabitsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[settings.notifEnabled,settings.notifTime,settings.autoSync,loaded]);
 
-  /* ── Dynamisches Hydrationsziel ── */
+  /* ── Dynamisches Hydrationsziel (korrigierte Formel) ── */
   useEffect(()=>{
     if(!settings.ivAthleteId||!settings.ivApiKey||!loaded)return;
     const waterHabits=habits.filter(h=>h.habitType==="numeric"&&["l","liter"].includes(h.unit.toLowerCase()));
     if(!waterHabits.length)return;
+
     const run=async()=>{
       interface IvAct { type?:string; sport_type?:string; moving_time?:number; icu_training_load?:number; training_load_score?:number; }
       let acts:IvAct[]=[];
-      try{const r=await fetch(`https://intervals.icu/api/v1/athlete/${settings.ivAthleteId}/activities?oldest=${selDate}&newest=${selDate}`,{headers:{Authorization:"Basic "+btoa(`API_KEY:${settings.ivApiKey}`)}});if(r.ok)acts=await r.json();}catch{}
+      try{
+        const r=await fetch(
+          `https://intervals.icu/api/v1/athlete/${settings.ivAthleteId}/activities?oldest=${selDate}&newest=${selDate}`,
+          {headers:{Authorization:"Basic "+btoa(`API_KEY:${settings.ivApiKey}`)}}
+        );
+        if(r.ok)acts=await r.json();
+      }catch{}
+
       let tempC=18,tempSource="Schätzwert";
       if(settings.latitude!==null&&settings.longitude!==null){
-        try{const wr=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${settings.latitude}&longitude=${settings.longitude}&current=temperature_2m&timezone=auto`);if(wr.ok){const wd=await wr.json();if(wd.current?.temperature_2m!==undefined){tempC=wd.current.temperature_2m;tempSource=`${tempC.toFixed(1)}°C`;}}}catch{}
+        try{
+          const wr=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${settings.latitude}&longitude=${settings.longitude}&current=temperature_2m&timezone=auto`);
+          if(wr.ok){const wd=await wr.json();if(wd.current?.temperature_2m!==undefined){tempC=wd.current.temperature_2m;tempSource=`${tempC.toFixed(1)}°C`;}}
+        }catch{}
       }
-      const tempExtra=getTempExtra(tempC);
+
+      /* Basis-Wasserbedarf */
+      const baseWater = hydrationSettings.useWeightBased
+        ? Math.round(hydrationSettings.bodyWeightKg * 0.035 * 10) / 10
+        : hydrationSettings.baseWaterL;
+
       const newTargets:Record<string,number>={},newInfo:Record<string,string>={};
+
       for(const h of waterHabits){
-        let actExtra=0;const actParts:string[]=[];
+        let actExtra=0;
+        const actParts:string[]=[];
+
         for(const act of acts){
-          const sport=act.sport_type||act.type||"Workout";
-          const movingH=(act.moving_time||0)/3600;
-          const load=act.icu_training_load||act.training_load_score||0;
-          const rate=getSweatRateL(sport,movingH>0?load/movingH:50);
-          const extra=Math.round(rate*movingH*10)/10;
-          actExtra+=extra;
-          if(extra>0)actParts.push(`${sport} ${Math.round(movingH*60)}min (+${extra.toFixed(1)}L)`);
+          const sport     = act.sport_type||act.type||"Workout";
+          const movingH   = (act.moving_time||0)/3600;
+          const load      = act.icu_training_load||act.training_load_score||0;
+          const lph       = movingH > 0 ? load/movingH : 50;
+          const rateL     = getSweatRateL(sport, lph, tempC, hydrationSettings.sweatTests);
+          const extra     = Math.round(rateL*movingH*10)/10;
+          actExtra += extra;
+          if(extra>0) actParts.push(`${sport} ${Math.round(movingH*60)}min (+${extra.toFixed(1)}L)`);
         }
-        const totalExtra=Math.round((actExtra+tempExtra)*10)/10;
-        if(totalExtra>0){
-          newTargets[h.id]=Math.round((h.numTarget+totalExtra)*10)/10;
-          const parts=[`Basis: ${h.numTarget} L`,...actParts.map(p=>`Training: ${p}`)];
-          if(tempExtra>0)parts.push(`Temperatur (${tempSource}): +${tempExtra.toFixed(1)} L`);
-          parts.push(`→ Gesamt: ${newTargets[h.id]} L`);
-          newInfo[h.id]=parts.join(" · ");
-        }
+
+        /* Temperatur-Basiszuschlag nur wenn kein Workout (sonst bereits in Schweißrate) */
+        const tempBonus = acts.length===0 ? getTempBaseBonus(tempC) : 0;
+        const total     = Math.round((baseWater + actExtra + tempBonus)*10)/10;
+
+        newTargets[h.id] = total;
+
+        /* Tooltip-Info */
+        const baseLabel = hydrationSettings.useWeightBased
+          ? `Basis: ${baseWater} L (${hydrationSettings.bodyWeightKg}kg × 35ml)`
+          : `Basis: ${baseWater} L (manuell)`;
+        const parts = [baseLabel];
+        if(tempSource!=="Schätzwert") parts.push(`🌡 ${tempSource}`);
+        actParts.forEach(p=>parts.push(`Training: ${p}`));
+        if(tempBonus>0) parts.push(`Ruhetag-Temp: +${tempBonus.toFixed(1)}L`);
+        parts.push(`📊 ${calibLabel(hydrationSettings.sweatTests)}`);
+        parts.push(`→ Gesamt: ${total} L`);
+        newInfo[h.id] = parts.join(" · ");
       }
-      setDynamicTargets(newTargets);setDynamicInfo(newInfo);
+
+      setDynamicTargets(newTargets);
+      setDynamicInfo(newInfo);
     };
+
     run();
-  },[selDate,settings.ivAthleteId,settings.ivApiKey,settings.latitude,settings.longitude,habits,loaded]);
+  },[selDate,settings.ivAthleteId,settings.ivApiKey,settings.latitude,settings.longitude,habits,loaded,hydrationSettings]);
 
   const today=todayStr(),isToday=selDate===today;
   const day=useMemo(()=>normalizeDay(history[selDate]),[history,selDate]);
@@ -376,6 +500,15 @@ export default function HabitsPage() {
   const exportJSON=()=>dl(`habits-${today}.json`,JSON.stringify({habits,history},null,2),"application/json");
   function dl(name:string,content:string,type:string){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([content],{type}));a.download=name;a.click();}
   const getLocation=()=>{if(!navigator.geolocation)return;navigator.geolocation.getCurrentPosition(pos=>{setSettings(s=>({...s,latitude:Math.round(pos.coords.latitude*1000)/1000,longitude:Math.round(pos.coords.longitude*1000)/1000}));});};
+
+  /* Hilfsfunktion: Schweißraten-Test-Feld updaten */
+  const setSweatTest = (key: keyof HydrationSettings["sweatTests"], val: string) => {
+    const n = parseFloat(val);
+    setHydrationSettings(prev => ({
+      ...prev,
+      sweatTests: { ...prev.sweatTests, [key]: isNaN(n) || val === "" ? null : Math.round(n) },
+    }));
+  };
 
   const syncIndicator = {
     idle:    "",
@@ -563,7 +696,7 @@ export default function HabitsPage() {
 
           <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
             <p className="text-sm font-semibold text-white">intervals.icu Wellness-Sync</p>
-            <p className="text-xs text-dash-muted leading-relaxed">Habits → Tags + Kommentar · Mood → <code className="text-indigo-300 text-[10px]">motivation</code>. Wasserziel wird dynamisch berechnet: Sportart × Intensität + Temperatur.</p>
+            <p className="text-xs text-dash-muted leading-relaxed">Habits → Tags + Kommentar · Mood → <code className="text-indigo-300 text-[10px]">motivation</code>. Wasserziel wird dynamisch berechnet: Sportart × Intensität × Temperatur.</p>
             <div><label className="text-[11px] text-dash-muted block mb-1">Athleten-ID</label><input type="text" value={settings.ivAthleteId} onChange={e=>setSettings(s=>({...s,ivAthleteId:e.target.value}))} placeholder="i12345" className="w-40 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
             <div><label className="text-[11px] text-dash-muted block mb-1">API-Key</label><input type="password" value={settings.ivApiKey} onChange={e=>setSettings(s=>({...s,ivApiKey:e.target.value}))} placeholder="••••••••" className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
             <div className="flex items-center gap-3 flex-wrap">
@@ -574,10 +707,133 @@ export default function HabitsPage() {
             {settings.lastSync&&<p className="text-[11px] text-dash-muted/50">Letzter Sync: {new Date(settings.lastSync).toLocaleString("de-DE")}</p>}
           </div>
 
+          {/* ── Hydration & Schweißraten-Tests ── */}
+          <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-4">
+            <div>
+              <p className="text-sm font-semibold text-white">Hydration & Schweißraten-Tests</p>
+              <p className="text-xs text-dash-muted mt-1 leading-relaxed">
+                Basis + persönliche Testwerte → präziseres Tagesziel als generische Tabellen.
+                Gespeichert nur lokal (gerätespezifisch).
+              </p>
+            </div>
+
+            {/* Basis-Wasserbedarf */}
+            <div className="space-y-2">
+              <p className="text-[11px] text-dash-muted uppercase tracking-wider font-medium">Basis-Wasserbedarf</p>
+              <div className="flex items-center gap-3 flex-wrap">
+                <label className="flex items-center gap-2 text-xs text-dash-muted cursor-pointer">
+                  <input type="radio" name="waterbase" checked={hydrationSettings.useWeightBased} onChange={()=>setHydrationSettings(p=>({...p,useWeightBased:true}))}/>
+                  Gewichtsbasiert
+                </label>
+                <label className="flex items-center gap-2 text-xs text-dash-muted cursor-pointer">
+                  <input type="radio" name="waterbase" checked={!hydrationSettings.useWeightBased} onChange={()=>setHydrationSettings(p=>({...p,useWeightBased:false}))}/>
+                  Manuell
+                </label>
+              </div>
+              {hydrationSettings.useWeightBased ? (
+                <div className="flex items-center gap-2">
+                  <input type="number" min="40" max="200" step="0.5"
+                    value={hydrationSettings.bodyWeightKg}
+                    onChange={e=>setHydrationSettings(p=>({...p,bodyWeightKg:parseFloat(e.target.value)||75}))}
+                    className="w-20 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/>
+                  <span className="text-xs text-dash-muted">kg</span>
+                  <span className="text-xs text-indigo-300 ml-1">
+                    = {Math.round(hydrationSettings.bodyWeightKg * 0.035 * 10) / 10} L/Tag Basis
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <input type="number" min="1" max="6" step="0.1"
+                    value={hydrationSettings.baseWaterL}
+                    onChange={e=>setHydrationSettings(p=>({...p,baseWaterL:parseFloat(e.target.value)||2.6}))}
+                    className="w-20 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/>
+                  <span className="text-xs text-dash-muted">L/Tag</span>
+                </div>
+              )}
+            </div>
+
+            {/* Schweißraten-Tests */}
+            <div className="space-y-3">
+              <p className="text-[11px] text-dash-muted uppercase tracking-wider font-medium">Schweißraten-Tests</p>
+              <p className="text-[10px] text-dash-muted/70 leading-relaxed">
+                Berechnung: (Gewicht vorher − nachher) × 1000 + getrunkene ml ÷ Dauer (h) = ml/h
+              </p>
+
+              {/* Test: Outdoor ~24°C */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <p className="text-xs text-white">Outdoor ~24°C</p>
+                  <p className="text-[10px] text-dash-muted">Straße / Gravel bei normaler Sommertemperatur</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input type="number" min="200" max="3000" step="10"
+                    value={hydrationSettings.sweatTests.outdoor24 ?? ""}
+                    placeholder="—"
+                    onChange={e=>setSweatTest("outdoor24", e.target.value)}
+                    className="w-20 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white text-right focus:outline-none focus:border-indigo-500 transition-colors tabular-nums"/>
+                  <span className="text-[11px] text-dash-muted w-8">ml/h</span>
+                  <span className="text-base">{hydrationSettings.sweatTests.outdoor24 ? "✅" : "⏳"}</span>
+                </div>
+              </div>
+
+              {/* Test: Outdoor >28°C */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <p className="text-xs text-white">Outdoor &gt;28°C</p>
+                  <p className="text-[10px] text-dash-muted">Straße / Gravel bei Hitze — ausstehend</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input type="number" min="200" max="3000" step="10"
+                    value={hydrationSettings.sweatTests.outdoor28 ?? ""}
+                    placeholder="—"
+                    onChange={e=>setSweatTest("outdoor28", e.target.value)}
+                    className="w-20 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white text-right focus:outline-none focus:border-indigo-500 transition-colors tabular-nums"/>
+                  <span className="text-[11px] text-dash-muted w-8">ml/h</span>
+                  <span className="text-base">{hydrationSettings.sweatTests.outdoor28 ? "✅" : "⏳"}</span>
+                </div>
+              </div>
+
+              {/* Test: Rolle / Zwift */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <p className="text-xs text-white">Rolle / Zwift (indoor)</p>
+                  <p className="text-[10px] text-dash-muted">Kein Fahrtwind → eigene Rate, temperaturunabhängig</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input type="number" min="200" max="3000" step="10"
+                    value={hydrationSettings.sweatTests.rolle ?? ""}
+                    placeholder="—"
+                    onChange={e=>setSweatTest("rolle", e.target.value)}
+                    className="w-20 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white text-right focus:outline-none focus:border-indigo-500 transition-colors tabular-nums"/>
+                  <span className="text-[11px] text-dash-muted w-8">ml/h</span>
+                  <span className="text-base">{hydrationSettings.sweatTests.rolle ? "✅" : "⏳"}</span>
+                </div>
+              </div>
+
+              {/* Kalibrierungsstatus */}
+              <div className="flex items-center gap-2 pt-1">
+                <span className={clsx("text-[10px] px-2 py-1 rounded-lg border",
+                  hydrationSettings.sweatTests.outdoor24 && hydrationSettings.sweatTests.outdoor28 && hydrationSettings.sweatTests.rolle
+                    ? "border-emerald-500/30 text-emerald-400 bg-emerald-500/5"
+                    : hydrationSettings.sweatTests.outdoor24
+                    ? "border-indigo-500/30 text-indigo-300 bg-indigo-500/5"
+                    : "border-dash-border text-dash-muted"
+                )}>
+                  📊 {calibLabel(hydrationSettings.sweatTests)}
+                </span>
+                <button
+                  onClick={()=>setHydrationSettings(p=>({...p,sweatTests:{outdoor24:null,outdoor28:null,rolle:null}}))}
+                  className="text-[10px] px-2 py-1 rounded-lg border border-dash-border text-dash-muted hover:text-red-400 hover:border-red-500/30 transition-colors">
+                  Zurücksetzen
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
             <p className="text-sm font-semibold text-white">Standort (Temperaturanpassung)</p>
-            <p className="text-xs text-dash-muted">&lt;20°C: +0 L · 20–25°C: +0,3 L · 25–30°C: +0,6 L · 30–35°C: +0,9 L · &gt;35°C: +1,2 L</p>
-            <div><label className="text-[11px] text-dash-muted block mb-1">Ortsname</label><input type="text" value={settings.locationName} onChange={e=>setSettings(s=>({...s,locationName:e.target.value}))} placeholder="z. B. Ennigerloh" className="w-48 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
+            <p className="text-xs text-dash-muted">Wird via Open-Meteo abgerufen und als Multiplikator auf die Schweißrate angewendet (nicht als Flatbetrag).</p>
+            <div><label className="text-[11px] text-dash-muted block mb-1">Ortsname</label><input type="text" value={settings.locationName} onChange={e=>setSettings(s=>({...s,locationName:e.target.value}))} placeholder="z. B. Borken" className="w-48 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
             <div className="flex items-center gap-3 flex-wrap">
               <button onClick={getLocation} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><MapPin size={12}/> Standort automatisch ermitteln</button>
               {settings.latitude!==null&&<span className="text-[11px] text-dash-muted">✓ {settings.latitude?.toFixed(3)}, {settings.longitude?.toFixed(3)}</span>}
