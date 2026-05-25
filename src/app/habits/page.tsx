@@ -239,7 +239,7 @@ function HabitGrid({ habit, history, today, onToggle }: {
 /* ══════════════════════════════════════
    SERVER SYNC HELPERS
 ══════════════════════════════════════ */
-async function loadFromServer(): Promise<{habits?:Habit[];history?:History;settings?:Partial<HabitSettings>}|null> {
+async function loadFromServer(): Promise<{habits?:Habit[];history?:History;settings?:Partial<HabitSettings>;hydrationSettings?:Partial<HydrationSettings>}|null> {
   try {
     const r = await fetch("/api/habits", { cache:"no-store" });
     if (!r.ok) return null;
@@ -248,12 +248,12 @@ async function loadFromServer(): Promise<{habits?:Habit[];history?:History;setti
     return data;
   } catch { return null; }
 }
-async function saveToServer(habits: Habit[], history: History, settings: HabitSettings): Promise<boolean> {
+async function saveToServer(habits: Habit[], history: History, settings: HabitSettings, hydrationSettings: HydrationSettings): Promise<boolean> {
   try {
     const r = await fetch("/api/habits", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ habits, history, settings }),
+      body: JSON.stringify({ habits, history, settings, hydrationSettings }),
     });
     return r.ok;
   } catch { return false; }
@@ -286,11 +286,6 @@ export default function HabitsPage() {
   /* ── Laden ── */
   useEffect(()=>{
     const load = async () => {
-      try {
-        const h = JSON.parse(localStorage.getItem("ht_hydration") || "null");
-        if (h) setHydrationSettings(prev => ({ ...prev, ...h, sweatTests: { ...prev.sweatTests, ...h.sweatTests } }));
-      } catch {}
-
       const serverData = await loadFromServer();
       if (serverData) {
         if (serverData.habits)   setHabits(serverData.habits);
@@ -300,12 +295,28 @@ export default function HabitsPage() {
           for (const [k,v] of Object.entries(serverData.history)) norm[k] = normalizeDay(v);
           setHistory(norm);
         }
-        if (serverData.settings) setSettings(p=>({...p,...serverData.settings}));
+        if (serverData.settings)          setSettings(p=>({...p,...serverData.settings}));
+        // Server gewinnt über localStorage für hydrationSettings
+        if (serverData.hydrationSettings) {
+          setHydrationSettings(prev => ({
+            ...prev,
+            ...serverData.hydrationSettings,
+            sweatTests: { ...prev.sweatTests, ...serverData.hydrationSettings!.sweatTests },
+          }));
+          localStorage.setItem("ht_hydration", JSON.stringify(serverData.hydrationSettings));
+        } else {
+          // Fallback: localStorage falls Server noch kein hydrationSettings kennt
+          try {
+            const h = JSON.parse(localStorage.getItem("ht_hydration") || "null");
+            if (h) setHydrationSettings(prev => ({ ...prev, ...h, sweatTests: { ...prev.sweatTests, ...h.sweatTests } }));
+          } catch {}
+        }
         if (serverData.habits)   localStorage.setItem("ht_habits",   JSON.stringify(serverData.habits));
         if (serverData.history)  localStorage.setItem("ht_history",  JSON.stringify(serverData.history));
         if (serverData.settings) localStorage.setItem("ht_settings", JSON.stringify(serverData.settings));
         setSyncState("saved");
       } else {
+        // Offline-Fallback: alles aus localStorage
         try { setHabits(JSON.parse(localStorage.getItem("ht_habits")||"null")??DEFAULTS); } catch { setHabits(DEFAULTS); }
         try {
           const raw=JSON.parse(localStorage.getItem("ht_history")||"{}") as Record<string,unknown>;
@@ -314,6 +325,10 @@ export default function HabitsPage() {
           setHistory(norm);
         } catch { setHistory({}); }
         try { const s=JSON.parse(localStorage.getItem("ht_settings")||"{}") as Partial<HabitSettings>; setSettings(p=>({...p,...s})); } catch {}
+        try {
+          const h = JSON.parse(localStorage.getItem("ht_hydration") || "null");
+          if (h) setHydrationSettings(prev => ({ ...prev, ...h, sweatTests: { ...prev.sweatTests, ...h.sweatTests } }));
+        } catch {}
         setSyncState("offline");
       }
       setLoaded(true);
@@ -321,25 +336,20 @@ export default function HabitsPage() {
     load();
   },[]);
 
-  /* ── Speichern ── */
+  /* ── Speichern (alle Daten inkl. hydrationSettings) ── */
   useEffect(()=>{
     if (!loaded) return;
-    localStorage.setItem("ht_habits",   JSON.stringify(habits));
-    localStorage.setItem("ht_history",  JSON.stringify(history));
-    localStorage.setItem("ht_settings", JSON.stringify(settings));
+    localStorage.setItem("ht_habits",      JSON.stringify(habits));
+    localStorage.setItem("ht_history",     JSON.stringify(history));
+    localStorage.setItem("ht_settings",    JSON.stringify(settings));
+    localStorage.setItem("ht_hydration",   JSON.stringify(hydrationSettings));
     clearTimeout(saveTimer.current);
     setSyncState("saving");
     saveTimer.current = setTimeout(async () => {
-      const ok = await saveToServer(habits, history, settings);
+      const ok = await saveToServer(habits, history, settings, hydrationSettings);
       setSyncState(ok ? "saved" : "offline");
     }, 800);
-  },[habits, history, settings, loaded]);
-
-  /* ── Hydration-Einstellungen speichern ── */
-  useEffect(()=>{
-    if (!loaded) return;
-    localStorage.setItem("ht_hydration", JSON.stringify(hydrationSettings));
-  },[hydrationSettings, loaded]);
+  },[habits, history, settings, hydrationSettings, loaded]);
 
   /* ── Notifications ── */
   useEffect(()=>{
