@@ -385,19 +385,22 @@ export default function HabitsPage() {
         ? Math.round(hydrationSettings.bodyWeightKg * 0.035 * 10) / 10
         : hydrationSettings.baseWaterL;
 
-      // Temperatur (Open-Meteo)
+      // Temperatur (Open-Meteo) — immer Tageshöchstwert.
+      // Heute: Vorhersage-Maximum (stabil ab Morgen, ändert sich kaum).
+      // Vergangene Tage: tatsächliches Maximum (unveränderlich).
+      // → Ziel ist damit für jeden Tag eindeutig und konsistent.
       let tempC = 18, tempSource = "Schätzwert (18°C)";
       if(settings.latitude!==null && settings.longitude!==null){
         try{
           const wr = await fetch(
-            `https://api.open-meteo.com/v1/forecast?latitude=${settings.latitude}&longitude=${settings.longitude}&current=temperature_2m&timezone=auto`,
+            `https://api.open-meteo.com/v1/forecast?latitude=${settings.latitude}&longitude=${settings.longitude}&daily=temperature_2m_max&start_date=${selDate}&end_date=${selDate}&timezone=auto`,
             { cache:"no-store" }
           );
           if(wr.ok){
-            const wd = await wr.json() as { current?: { temperature_2m?: number } };
-            if(wd.current?.temperature_2m !== undefined){
-              tempC = wd.current.temperature_2m;
-              tempSource = `${tempC.toFixed(1)}°C (Open-Meteo)`;
+            const wd = await wr.json() as { daily?: { temperature_2m_max?: number[] } };
+            if(wd.daily?.temperature_2m_max?.[0] !== undefined){
+              tempC = wd.daily.temperature_2m_max[0];
+              tempSource = `${tempC.toFixed(1)}°C Tageshöchst`;
             }
           }
         } catch(e) { debugLines.push(`⚠ Wetter-Fehler: ${e}`); }
@@ -408,7 +411,13 @@ export default function HabitsPage() {
       debugLines.push(`Temperatur: ${tempSource} · Multiplikator: ×${tempMultiplier(tempC).toFixed(2)}`);
 
       // Aktivitäten (via Proxy um CORS zu vermeiden)
-      interface IvAct { type?:string; sport_type?:string; moving_time?:number; icu_training_load?:number; training_load_score?:number; name?:string; }
+      // average_temp: vom Gerät aufgezeichnet (Garmin etc.) — präziseste Quelle
+      // Fallback: tempC aus Open-Meteo Tageshöchstwert
+      interface IvAct {
+        type?: string; sport_type?: string; moving_time?: number;
+        icu_training_load?: number; training_load_score?: number; name?: string;
+        average_temp?: number; icu_average_temp?: number; temp?: number;
+      }
       let acts: IvAct[] = [];
 
       if(settings.ivAthleteId && settings.ivApiKey){
@@ -418,10 +427,12 @@ export default function HabitsPage() {
           acts = Array.isArray(data) ? data : [];
           debugLines.push(`Aktivitäten gefunden: ${acts.length}`);
           acts.forEach(a => {
-            const sport = a.sport_type || a.type || "?";
-            const minStr = Math.round((a.moving_time||0)/60);
-            const load   = a.icu_training_load || a.training_load_score || 0;
-            debugLines.push(`  → ${sport} (${a.name||"–"}): ${minStr}min, Load=${load}`);
+            const sport    = a.sport_type || a.type || "?";
+            const minStr   = Math.round((a.moving_time||0)/60);
+            const load     = a.icu_training_load || a.training_load_score || 0;
+            const actTemp  = a.average_temp ?? a.icu_average_temp ?? a.temp;
+            const tempStr  = actTemp != null ? `${actTemp.toFixed(1)}°C (Gerät)` : `${tempC.toFixed(1)}°C (Open-Meteo)`;
+            debugLines.push(`  → ${sport} (${a.name||"–"}): ${minStr}min, Load=${load}, Temp=${tempStr}`);
           });
         } catch(e){
           debugLines.push(`⚠ IV-API Fehler: ${e}`);
@@ -443,27 +454,33 @@ export default function HabitsPage() {
           const movingH = (act.moving_time || 0) / 3600;
           const load    = act.icu_training_load || act.training_load_score || 0;
           const lph     = movingH > 0 ? load / movingH : 50;
-          const rateL   = getSweatRateL(sport, lph, tempC, hydrationSettings.sweatTests);
+
+          // Workout-Temperatur: Gerät hat Vorrang, sonst Open-Meteo Tageshöchst
+          const actTemp  = act.average_temp ?? act.icu_average_temp ?? act.temp ?? null;
+          const workoutT = actTemp ?? tempC;
+          const tempLabel = actTemp != null
+            ? `${actTemp.toFixed(1)}°C Gerät`
+            : `${tempC.toFixed(1)}°C Open-Meteo`;
+
+          const rateL   = getSweatRateL(sport, lph, workoutT, hydrationSettings.sweatTests);
           const extra   = Math.round(rateL * movingH * 10) / 10;
           actExtra += extra;
           if(extra > 0){
             actParts.push(
-              `${sport} ${Math.round(movingH*60)}min (+${extra.toFixed(1)}L @ ${rateL.toFixed(2)}L/h)`
+              `${sport} ${Math.round(movingH*60)}min @ ${tempLabel} (+${extra.toFixed(1)}L)`
             );
           }
         }
 
         const tempBonus = acts.length === 0 ? getTempBaseBonus(tempC) : 0;
-        // Basis ist immer mindestens der gesetzte Habit-Zielwert (numTarget).
-        // Dynamisches Ziel nur setzen wenn es den Basis-Wert überschreitet.
         const baseWater = Math.max(h.numTarget, weightBase);
         const total     = Math.round((baseWater + actExtra + tempBonus) * 10) / 10;
 
-        // Nur anzeigen wenn wirklich höher als Standardziel
         if (total > h.numTarget) newTargets[h.id] = total;
 
         const baseLabel = `Basis: ${baseWater} L (Habit: ${h.numTarget} L${weightBase > h.numTarget ? `, Gewicht: ${weightBase} L` : ""})`;
-        const parts = [baseLabel, `🌡 ${tempSource}`];
+        const dayTempLabel = `🌡 Tag: ${tempSource}`;
+        const parts = [baseLabel, dayTempLabel];
         actParts.forEach(p => parts.push(`Training: ${p}`));
         if(tempBonus > 0) parts.push(`Temp-Basiszuschlag: +${tempBonus.toFixed(1)}L`);
         parts.push(`📊 ${calibLabel(hydrationSettings.sweatTests)}`);
