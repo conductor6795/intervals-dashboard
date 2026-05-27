@@ -284,52 +284,32 @@ export default function HabitsPage() {
   const saveTimer        = useRef<ReturnType<typeof setTimeout>>(undefined);
   const initialLoadDone  = useRef(false); // verhindert sofortiges Überschreiben nach Server-Load
 
-  /* ── Laden ── */
+  /* ── Laden — ausschließlich vom Server, kein localStorage als Quelle ── */
   useEffect(()=>{
     const load = async () => {
+      setSyncState("saving"); // "Laden…" Indikator
       const serverData = await loadFromServer();
       if (serverData) {
-        if (serverData.habits)   setHabits(serverData.habits);
-        else                     setHabits(DEFAULTS);
+        if (serverData.habits) setHabits(serverData.habits);
+        else                   setHabits(DEFAULTS);
         if (serverData.history) {
           const norm: History = {};
           for (const [k,v] of Object.entries(serverData.history)) norm[k] = normalizeDay(v);
           setHistory(norm);
         }
-        if (serverData.settings)          setSettings(p=>({...p,...serverData.settings}));
-        // Server gewinnt über localStorage für hydrationSettings
+        if (serverData.settings) setSettings(p=>({...p,...serverData.settings}));
         if (serverData.hydrationSettings) {
           setHydrationSettings(prev => ({
             ...prev,
             ...serverData.hydrationSettings,
             sweatTests: { ...prev.sweatTests, ...serverData.hydrationSettings!.sweatTests },
           }));
-          localStorage.setItem("ht_hydration", JSON.stringify(serverData.hydrationSettings));
-        } else {
-          // Fallback: localStorage falls Server noch kein hydrationSettings kennt
-          try {
-            const h = JSON.parse(localStorage.getItem("ht_hydration") || "null");
-            if (h) setHydrationSettings(prev => ({ ...prev, ...h, sweatTests: { ...prev.sweatTests, ...h.sweatTests } }));
-          } catch {}
         }
-        if (serverData.habits)   localStorage.setItem("ht_habits",   JSON.stringify(serverData.habits));
-        if (serverData.history)  localStorage.setItem("ht_history",  JSON.stringify(serverData.history));
-        if (serverData.settings) localStorage.setItem("ht_settings", JSON.stringify(serverData.settings));
         setSyncState("saved");
       } else {
-        // Offline-Fallback: alles aus localStorage
-        try { setHabits(JSON.parse(localStorage.getItem("ht_habits")||"null")??DEFAULTS); } catch { setHabits(DEFAULTS); }
-        try {
-          const raw=JSON.parse(localStorage.getItem("ht_history")||"{}") as Record<string,unknown>;
-          const norm:History={};
-          for(const[k,v]of Object.entries(raw)) norm[k]=normalizeDay(v);
-          setHistory(norm);
-        } catch { setHistory({}); }
-        try { const s=JSON.parse(localStorage.getItem("ht_settings")||"{}") as Partial<HabitSettings>; setSettings(p=>({...p,...s})); } catch {}
-        try {
-          const h = JSON.parse(localStorage.getItem("ht_hydration") || "null");
-          if (h) setHydrationSettings(prev => ({ ...prev, ...h, sweatTests: { ...prev.sweatTests, ...h.sweatTests } }));
-        } catch {}
+        // Server nicht erreichbar — leere Standardwerte, kein staler localStorage-Cache
+        setHabits(DEFAULTS);
+        setHistory({});
         setSyncState("offline");
       }
       setLoaded(true);
@@ -337,19 +317,14 @@ export default function HabitsPage() {
     load();
   },[]);
 
-  /* ── Speichern (alle Daten inkl. hydrationSettings) ── */
+  /* ── Speichern — ausschließlich auf Server, kein localStorage ── */
   useEffect(()=>{
     if (!loaded) return;
-    // Ersten Feuerpunkt nach Server-Load überspringen —
-    // sonst würde PC die gerade geladenen Serverdaten sofort wieder überschreiben.
+    // Ersten Feuerpunkt nach Server-Load überspringen
     if (!initialLoadDone.current) {
       initialLoadDone.current = true;
       return;
     }
-    localStorage.setItem("ht_habits",    JSON.stringify(habits));
-    localStorage.setItem("ht_history",   JSON.stringify(history));
-    localStorage.setItem("ht_settings",  JSON.stringify(settings));
-    localStorage.setItem("ht_hydration", JSON.stringify(hydrationSettings));
     clearTimeout(saveTimer.current);
     setSyncState("saving");
     saveTimer.current = setTimeout(async () => {
@@ -597,9 +572,19 @@ export default function HabitsPage() {
     }));
   };
 
-  const syncIndicator = { idle:"", saving:"Speichern…", saved:"✓ Gespeichert", offline:"⚠ Offline (lokal)" }[syncState];
+  const syncIndicator = {
+    idle:    "",
+    saving:  "Speichern…",
+    saved:   "✓ Gespeichert",
+    offline: "⚠ Server nicht erreichbar",
+  }[syncState];
 
-  if(!loaded)return<div className="p-6 text-dash-muted text-sm animate-pulse">Lade Habits…</div>;
+  if(!loaded)return(
+    <div className="p-6 space-y-2">
+      <div className="text-dash-muted text-sm animate-pulse">Lade Daten vom Server…</div>
+      <div className="text-[11px] text-dash-muted/50">Lädt nicht? Server prüfen: docker ps | grep intervals</div>
+    </div>
+  );
 
   return(
     <>
@@ -639,7 +624,8 @@ export default function HabitsPage() {
           </div>
 
           {habits.length>0&&(<div className="flex items-center gap-3"><div className="flex-1 h-1.5 rounded-full bg-dash-card overflow-hidden border border-dash-border"><div className="h-full rounded-full bg-indigo-500 transition-all duration-300" style={{width:`${Math.round(pct*100)}%`}}/></div><span className="text-xs text-dash-muted tabular-nums">{doneCount}/{habits.length}</span></div>)}
-          {habits.length===0&&<div className="rounded-2xl border border-dashed border-dash-border p-10 text-center text-dash-muted text-sm">Noch keine Habits.<br/>Im Tab <strong className="text-white">Verwalten</strong> anfangen.</div>}
+          {syncState==="offline"&&<div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-4 text-sm text-red-300">⚠ Server nicht erreichbar — Änderungen werden nicht gespeichert.<br/><span className="text-[11px] text-red-300/70">Container läuft? → docker ps | grep intervals</span></div>}
+          {habits.length===0&&syncState!=="offline"&&<div className="rounded-2xl border border-dashed border-dash-border p-10 text-center text-dash-muted text-sm">Noch keine Habits.<br/>Im Tab <strong className="text-white">Verwalten</strong> anfangen.</div>}
 
           {habits.map(hb=>{
             const done=isCompleted(hb,selDate,history),numVal=hb.habitType==="numeric"?(day.numeric[hb.id]??null):null;
