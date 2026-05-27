@@ -284,12 +284,13 @@ export default function HabitsPage() {
   const saveTimer        = useRef<ReturnType<typeof setTimeout>>(undefined);
   const initialLoadDone  = useRef(false); // verhindert sofortiges Überschreiben nach Server-Load
 
-  /* ── Laden — ausschließlich vom Server, kein localStorage als Quelle ── */
+  /* ── Laden: Server primär, localStorage als Notfall-Backup ── */
   useEffect(()=>{
     const load = async () => {
-      setSyncState("saving"); // "Laden…" Indikator
+      setSyncState("saving");
       const serverData = await loadFromServer();
       if (serverData) {
+        // Server liefert Daten → Server gewinnt immer
         if (serverData.habits) setHabits(serverData.habits);
         else                   setHabits(DEFAULTS);
         if (serverData.history) {
@@ -300,16 +301,30 @@ export default function HabitsPage() {
         if (serverData.settings) setSettings(p=>({...p,...serverData.settings}));
         if (serverData.hydrationSettings) {
           setHydrationSettings(prev => ({
-            ...prev,
-            ...serverData.hydrationSettings,
+            ...prev, ...serverData.hydrationSettings,
             sweatTests: { ...prev.sweatTests, ...serverData.hydrationSettings!.sweatTests },
           }));
         }
+        // Serverdaten in localStorage spiegeln (für Notfall)
+        localStorage.setItem("ht_habits",    JSON.stringify(serverData.habits ?? DEFAULTS));
+        if (serverData.history)           localStorage.setItem("ht_history",   JSON.stringify(serverData.history));
+        if (serverData.settings)          localStorage.setItem("ht_settings",  JSON.stringify(serverData.settings));
+        if (serverData.hydrationSettings) localStorage.setItem("ht_hydration", JSON.stringify(serverData.hydrationSettings));
         setSyncState("saved");
       } else {
-        // Server nicht erreichbar — leere Standardwerte, kein staler localStorage-Cache
-        setHabits(DEFAULTS);
-        setHistory({});
+        // Server nicht erreichbar → localStorage-Backup laden (schreibgeschützt)
+        try { const h=JSON.parse(localStorage.getItem("ht_habits")||"null"); if(h)setHabits(h); else setHabits(DEFAULTS); } catch { setHabits(DEFAULTS); }
+        try {
+          const raw=JSON.parse(localStorage.getItem("ht_history")||"{}") as Record<string,unknown>;
+          const norm:History={};
+          for(const[k,v]of Object.entries(raw)) norm[k]=normalizeDay(v);
+          setHistory(norm);
+        } catch { setHistory({}); }
+        try { const s=JSON.parse(localStorage.getItem("ht_settings")||"{}") as Partial<HabitSettings>; setSettings(p=>({...p,...s})); } catch {}
+        try {
+          const h=JSON.parse(localStorage.getItem("ht_hydration")||"null");
+          if(h) setHydrationSettings(prev=>({...prev,...h,sweatTests:{...prev.sweatTests,...h.sweatTests}}));
+        } catch {}
         setSyncState("offline");
       }
       setLoaded(true);
@@ -317,14 +332,15 @@ export default function HabitsPage() {
     load();
   },[]);
 
-  /* ── Speichern — ausschließlich auf Server, kein localStorage ── */
+  /* ── Speichern: Server primär + localStorage als Spiegel ── */
   useEffect(()=>{
     if (!loaded) return;
-    // Ersten Feuerpunkt nach Server-Load überspringen
-    if (!initialLoadDone.current) {
-      initialLoadDone.current = true;
-      return;
-    }
+    if (!initialLoadDone.current) { initialLoadDone.current = true; return; }
+    // localStorage parallel aktualisieren (Notfall-Backup)
+    localStorage.setItem("ht_habits",    JSON.stringify(habits));
+    localStorage.setItem("ht_history",   JSON.stringify(history));
+    localStorage.setItem("ht_settings",  JSON.stringify(settings));
+    localStorage.setItem("ht_hydration", JSON.stringify(hydrationSettings));
     clearTimeout(saveTimer.current);
     setSyncState("saving");
     saveTimer.current = setTimeout(async () => {

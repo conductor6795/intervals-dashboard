@@ -3,61 +3,72 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 
-// Verhindert Next.js-Caching des GET-Response → Handy bekommt immer aktuellen Stand
 export const dynamic = "force-dynamic";
 
-// Speicherpfad: /app/data/habits.json im Container
-// → via docker-compose Volume persistent auf dem Host
-const DATA_DIR  = process.env.HABITS_DATA_DIR ?? path.join(process.cwd(), "data");
+// Datenpfad — wird durch docker-compose Volume persistent gemacht:
+// ./habits-data:/app/dataroot  →  DATA_DIR = /app/dataroot
+const DATA_DIR  = process.env.HABITS_DATA_DIR ?? path.join(process.cwd(), "dataroot");
 const DATA_FILE = path.join(DATA_DIR, "habits.json");
 
-// CORS-Header für externe Aufrufe (z.B. Claude Artifacts)
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+// CORS für externe Aufrufe (Artifacts etc.)
+const CORS = {
+  "Access-Control-Allow-Origin":  "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, x-token",
 };
 
-async function ensureDir() {
-  if (!existsSync(DATA_DIR)) await mkdir(DATA_DIR, { recursive: true });
-}
-
-// Prüft ob der Token im Query-Parameter mit dem Env-Wert übereinstimmt
+/* ── Auth-Check ─────────────────────────────────────────────────────────────
+   Interne Aufrufe (vom Dashboard selbst, gleiche Origin) → immer erlaubt.
+   Externe Aufrufe MIT Token → erlaubt wenn Token stimmt.
+   Externe Aufrufe OHNE Token → 401.
+   Wenn HABITS_READ_TOKEN nicht gesetzt → alle Aufrufe erlaubt (Entwicklung).
+   ────────────────────────────────────────────────────────────────────────── */
 function isAuthorized(req: NextRequest): boolean {
-  const token = req.nextUrl.searchParams.get("token");
-  const expected = process.env.HABITS_READ_TOKEN;
-  if (!expected) return false;           // Kein Token konfiguriert → Zugriff verweigert
-  return token === expected;
+  const expectedToken = process.env.HABITS_READ_TOKEN;
+
+  // Kein Token konfiguriert → offen (Entwicklung / reines Heimnetz)
+  if (!expectedToken) return true;
+
+  // Interner Aufruf: gleiche Origin oder kein Origin-Header (server-side)
+  const origin  = req.headers.get("origin")  ?? "";
+  const referer = req.headers.get("referer") ?? "";
+  const host    = req.headers.get("host")    ?? "";
+  if (!origin || origin.includes(host) || referer.includes(host)) return true;
+
+  // Externer Aufruf: Token in Header oder Query-Param prüfen
+  const headerToken = req.headers.get("x-token") ?? req.headers.get("authorization")?.replace("Bearer ", "");
+  const queryToken  = new URL(req.url).searchParams.get("token");
+  return headerToken === expectedToken || queryToken === expectedToken;
 }
 
-// Preflight-Request für CORS (Browser schickt das vor dem eigentlichen GET)
 export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+  return new NextResponse(null, { status: 204, headers: CORS });
 }
 
-// GET: öffentlich lesbar, aber nur mit gültigem Token
 export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: CORS_HEADERS });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: CORS });
   }
   try {
-    await ensureDir();
-    if (!existsSync(DATA_FILE)) return NextResponse.json({}, { headers: CORS_HEADERS });
-    const raw = await readFile(DATA_FILE, "utf-8");
-    return NextResponse.json(JSON.parse(raw), { headers: CORS_HEADERS });
-  } catch {
-    return NextResponse.json({}, { status: 500, headers: CORS_HEADERS });
+    if (!existsSync(DATA_FILE)) return NextResponse.json({}, { headers: CORS });
+    const raw  = await readFile(DATA_FILE, "utf-8");
+    const data = JSON.parse(raw);
+    return NextResponse.json(data, { headers: CORS });
+  } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500, headers: CORS });
   }
 }
 
-// POST: kein Token nötig — nur intern vom Dashboard erreichbar (kein CORS)
 export async function POST(req: NextRequest) {
+  if (!isAuthorized(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: CORS });
+  }
   try {
-    await ensureDir();
     const body = await req.json();
-    await writeFile(DATA_FILE, JSON.stringify(body), "utf-8");
-    return NextResponse.json({ ok: true });
-  } catch {
-    return NextResponse.json({ error: "write failed" }, { status: 500 });
+    if (!existsSync(DATA_DIR)) await mkdir(DATA_DIR, { recursive: true });
+    await writeFile(DATA_FILE, JSON.stringify(body, null, 2), "utf-8");
+    return NextResponse.json({ ok: true }, { headers: CORS });
+  } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500, headers: CORS });
   }
 }
