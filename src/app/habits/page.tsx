@@ -281,7 +281,8 @@ export default function HabitsPage() {
   const [loaded,            setLoaded]            = useState(false);
   const [syncState,         setSyncState]         = useState<"idle"|"saving"|"saved"|"offline">("idle");
 
-  const saveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const saveTimer        = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const initialLoadDone  = useRef(false); // verhindert sofortiges Überschreiben nach Server-Load
 
   /* ── Laden ── */
   useEffect(()=>{
@@ -339,10 +340,16 @@ export default function HabitsPage() {
   /* ── Speichern (alle Daten inkl. hydrationSettings) ── */
   useEffect(()=>{
     if (!loaded) return;
-    localStorage.setItem("ht_habits",      JSON.stringify(habits));
-    localStorage.setItem("ht_history",     JSON.stringify(history));
-    localStorage.setItem("ht_settings",    JSON.stringify(settings));
-    localStorage.setItem("ht_hydration",   JSON.stringify(hydrationSettings));
+    // Ersten Feuerpunkt nach Server-Load überspringen —
+    // sonst würde PC die gerade geladenen Serverdaten sofort wieder überschreiben.
+    if (!initialLoadDone.current) {
+      initialLoadDone.current = true;
+      return;
+    }
+    localStorage.setItem("ht_habits",    JSON.stringify(habits));
+    localStorage.setItem("ht_history",   JSON.stringify(history));
+    localStorage.setItem("ht_settings",  JSON.stringify(settings));
+    localStorage.setItem("ht_hydration", JSON.stringify(hydrationSettings));
     clearTimeout(saveTimer.current);
     setSyncState("saving");
     saveTimer.current = setTimeout(async () => {
@@ -762,7 +769,16 @@ export default function HabitsPage() {
               <span className={clsx("text-xs px-3 py-1.5 rounded-xl border",syncState==="saved"?"border-emerald-500/30 text-emerald-400 bg-emerald-500/5":syncState==="offline"?"border-yellow-500/30 text-yellow-400 bg-yellow-500/5":"border-dash-border text-dash-muted")}>
                 {syncState==="saved"?"✓ Synchronisiert":syncState==="offline"?"⚠ Offline":syncState==="saving"?"Speichern…":"–"}
               </span>
-              <button onClick={async()=>{const d=await loadFromServer();if(d){if(d.habits)setHabits(d.habits);if(d.history){const norm:History={};for(const[k,v]of Object.entries(d.history))norm[k]=normalizeDay(v);setHistory(norm);}setSyncState("saved");}}} className="text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors flex items-center gap-1"><RefreshCw size={11}/> Neu laden</button>
+              <button onClick={async()=>{
+  const d=await loadFromServer();
+  if(d){
+    if(d.habits)setHabits(d.habits);
+    if(d.history){const norm:History={};for(const[k,v]of Object.entries(d.history))norm[k]=normalizeDay(v);setHistory(norm);}
+    if(d.settings)setSettings(p=>({...p,...d.settings}));
+    if(d.hydrationSettings)setHydrationSettings(p=>({...p,...d.hydrationSettings,sweatTests:{...p.sweatTests,...d.hydrationSettings!.sweatTests}}));
+    setSyncState("saved");
+  }
+}} className="text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors flex items-center gap-1"><RefreshCw size={11}/> Neu laden</button>
             </div>
           </div>
 
