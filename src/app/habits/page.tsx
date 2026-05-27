@@ -21,7 +21,7 @@ interface Habit {
   habitType: HabitType; unit: string; numTarget: number;
   goalType: GoalType; goalValue: number;
 }
-interface DayData { checked: string[]; numeric: Record<string, number>; mood: number | null; }
+interface DayData { checked: string[]; numeric: Record<string, number>; mood: number | null; waterGoal?: number; }
 type History = Record<string, DayData>;
 interface HabitSettings {
   ivAthleteId: string; ivApiKey: string;
@@ -489,6 +489,17 @@ export default function HabitsPage() {
       setDynamicTargets(newTargets);
       setDynamicInfo(newInfo);
       setHydrationDebug(debugLines.join("\n"));
+
+      // Berechnetes Tagesziel in History speichern → landet in habits.json → Sync-Skript kann es lesen
+      if (waterHabits.length > 0) {
+        const wh = waterHabits[0];
+        const effectiveGoal = newTargets[wh.id] ?? wh.numTarget;
+        setHistory(prev => {
+          const d = normalizeDay(prev[selDate]);
+          if (d.waterGoal === effectiveGoal) return prev; // kein unnötiges Re-Render
+          return { ...prev, [selDate]: { ...d, waterGoal: effectiveGoal } };
+        });
+      }
     };
 
     run();
