@@ -74,6 +74,15 @@ const DRINK_BUTTONS = [
   { label:"Mische",     sd:1.5 },
   { label:"Cocktail",   sd:1.3 },
 ];
+/* Standarddrinks berechnen und formatieren */
+function calcDrinkSD(drinks: Record<string,number>): number {
+  return Math.round(DRINK_BUTTONS.reduce((s,d)=>s+(drinks[d.label]||0)*d.sd,0)*10)/10;
+}
+function formatDrinkLabel(drinks: Record<string,number>): string {
+  const parts=DRINK_BUTTONS.filter(d=>(drinks[d.label]||0)>0).map(d=>`${drinks[d.label]}× ${d.label}`);
+  if(!parts.length)return"";
+  return`${parts.join(", ")} (${calcDrinkSD(drinks)} SD)`;
+}
 
 /* ══════════════════════════════════════
    HYDRATION — Wissenschaftlich korrigierte Formeln
