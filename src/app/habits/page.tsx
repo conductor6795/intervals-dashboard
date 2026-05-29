@@ -21,7 +21,7 @@ interface Habit {
   habitType: HabitType; unit: string; numTarget: number;
   goalType: GoalType; goalValue: number;
 }
-interface DayData { checked: string[]; numeric: Record<string, number>; mood: number | null; waterGoal?: number; }
+interface DayData { checked: string[]; numeric: Record<string, number>; mood: number | null; drinks: Record<string, Record<string, number>>; }
 type History = Record<string, DayData>;
 interface HabitSettings {
   ivAthleteId: string; ivApiKey: string;
@@ -47,7 +47,7 @@ const DEFAULT_HYDRATION: HydrationSettings = {
 
 const DEFAULTS: Habit[] = [
   { id:"h1", name:"4L Wasser",    emoji:"💧", color:"#3b82f6", habitType:"numeric",  unit:"L",  numTarget:4, goalType:"daily",       goalValue:1  },
-  { id:"h2", name:"Alkohol",      emoji:"🍺", color:"#ef4444", habitType:"checkbox", unit:"",   numTarget:0, goalType:"max_per_days", goalValue:14 },
+  { id:"h2", name:"Alkohol",      emoji:"🍺", color:"#ef4444", habitType:"numeric",  unit:"SD", numTarget:0.1, goalType:"max_per_days", goalValue:14 },
   { id:"h3", name:"Sport 30 min", emoji:"🏃", color:"#10b981", habitType:"checkbox", unit:"",   numTarget:0, goalType:"min_per_week", goalValue:5  },
 ];
 const COLORS = ["#3b82f6","#10b981","#ef4444","#8b5cf6","#f43f5e","#f59e0b","#84cc16","#06b6d4","#94a3b8"];
@@ -65,6 +65,15 @@ const TOOLTIP_STYLE = { backgroundColor:"#131929", border:"1px solid #1e2d4a", b
 const MOOD_COLORS   = ["transparent","#ef4444","#f59e0b","#94a3b8","#3b82f6","#10b981"];
 const GRID_COL      = { display:"grid", gridTemplateColumns:"repeat(7, 16px)", gap:"3px" } as const;
 const VESSEL_SIZES  = [0.2, 0.3, 0.7];
+/* Standarddrinks nach Getränketyp (SD = 10g reiner Alkohol) */
+const DRINK_BUTTONS = [
+  { label:"0,2L Bier",  sd:0.6 },
+  { label:"0,33L Bier", sd:1.0 },
+  { label:"0,5L Bier",  sd:1.5 },
+  { label:"Shot",       sd:1.3 },
+  { label:"Mische",     sd:1.5 },
+  { label:"Cocktail",   sd:1.3 },
+];
 
 /* ══════════════════════════════════════
    HYDRATION — Wissenschaftlich korrigierte Formeln
@@ -164,7 +173,7 @@ function normalizeDay(raw: unknown): DayData {
   if (!raw) return { checked:[], numeric:{}, mood:null };
   if (Array.isArray(raw)) return { checked:raw as string[], numeric:{}, mood:null };
   const r = raw as Partial<DayData>;
-  return { checked:r.checked||[], numeric:r.numeric||{}, mood:r.mood??null };
+  return { checked:r.checked||[], numeric:r.numeric||{}, mood:r.mood??null, drinks:r.drinks||{} };
 }
 function isCompleted(h: Habit, date: string, history: History): boolean {
   const day = normalizeDay(history[date]);
@@ -489,17 +498,6 @@ export default function HabitsPage() {
       setDynamicTargets(newTargets);
       setDynamicInfo(newInfo);
       setHydrationDebug(debugLines.join("\n"));
-
-      // Berechnetes Tagesziel in History speichern → landet in habits.json → Sync-Skript kann es lesen
-      if (waterHabits.length > 0) {
-        const wh = waterHabits[0];
-        const effectiveGoal = newTargets[wh.id] ?? wh.numTarget;
-        setHistory(prev => {
-          const d = normalizeDay(prev[selDate]);
-          if (d.waterGoal === effectiveGoal) return prev; // kein unnötiges Re-Render
-          return { ...prev, [selDate]: { ...d, waterGoal: effectiveGoal } };
-        });
-      }
     };
 
     run();
@@ -524,6 +522,19 @@ export default function HabitsPage() {
   },[selDate]);
   const setMood=useCallback((val:number)=>{
     setHistory(prev=>{const day=normalizeDay(prev[selDate]);day.mood=day.mood===val?null:val;return{...prev,[selDate]:day};});
+  },[selDate]);
+  const setDrink=useCallback((habitId:string,drinkLabel:string,delta:number)=>{
+    setHistory(prev=>{
+      const day=normalizeDay(prev[selDate]);
+      const hd={...(day.drinks[habitId]||{})};
+      const next=Math.max(0,(hd[drinkLabel]||0)+delta);
+      if(next===0)delete hd[drinkLabel]; else hd[drinkLabel]=next;
+      day.drinks[habitId]=hd;
+      // SD total auto-berechnen
+      const sd=calcDrinkSD(hd);
+      if(sd>0)day.numeric[habitId]=sd; else delete day.numeric[habitId];
+      return{...prev,[selDate]:day};
+    });
   },[selDate]);
   const toggleDate=useCallback((hb:Habit,date:string)=>{
     setHistory(prev=>{const day=normalizeDay(prev[date]);if(hb.habitType==="checkbox"){const i=day.checked.indexOf(hb.id);if(i>=0)day.checked.splice(i,1);else day.checked.push(hb.id);}else{if(day.numeric[hb.id]!==undefined)delete day.numeric[hb.id];else day.numeric[hb.id]=hb.numTarget;}return{...prev,[date]:day};});
@@ -552,7 +563,13 @@ export default function HabitsPage() {
     if(!settings.ivAthleteId||!settings.ivApiKey)return false;
     const d=normalizeDay(history[date]);
     const tags=habits.filter(h=>d.checked.includes(h.id)).map(h=>h.name.replace(/\s+/g,"_"));
-    const nums=habits.filter(h=>h.habitType==="numeric"&&d.numeric[h.id]!==undefined).map(h=>`${h.name}: ${d.numeric[h.id]} ${h.unit}`).join(", ");
+    const nums=habits.filter(h=>h.habitType==="numeric"&&d.numeric[h.id]!==undefined).map(h=>{
+      if(h.unit.toLowerCase()==="sd"){
+        const label=formatDrinkLabel(d.drinks[h.id]||{});
+        return label?`${h.name}: ${label}`:`${h.name}: ${d.numeric[h.id]} SD`;
+      }
+      return`${h.name}: ${d.numeric[h.id]} ${h.unit}`;
+    }).join(", ");
     const payload={id:date,...(tags.length>0&&{tags}),...(nums&&{comment:`Habit Tracker – ${nums}`}),...(d.mood!==null&&{motivation:d.mood})};
     try{const res=await fetch(`https://intervals.icu/api/v1/athlete/${settings.ivAthleteId}/wellness`,{method:"PUT",headers:{"Content-Type":"application/json","Authorization":"Basic "+btoa(`API_KEY:${settings.ivApiKey}`)},body:JSON.stringify(payload)});if(!res.ok)throw new Error();setSettings(s=>({...s,lastSync:new Date().toISOString()}));return true;}catch{return false;}
   };
@@ -657,6 +674,7 @@ export default function HabitsPage() {
           {habits.map(hb=>{
             const done=isCompleted(hb,selDate,history),numVal=hb.habitType==="numeric"?(day.numeric[hb.id]??null):null;
             const isLUnit=["l","liter"].includes(hb.unit.toLowerCase());
+            const isSDUnit=hb.unit.toLowerCase()==="sd";
             const effectiveTarget=dynamicTargets[hb.id]??hb.numTarget,isDynamic=!!dynamicTargets[hb.id];
             return(
               <div key={hb.id}
@@ -668,7 +686,7 @@ export default function HabitsPage() {
                 onKeyDown={hb.habitType==="checkbox"?e=>{if(e.key==="Enter"||e.key===" ")toggle(hb.id);}:undefined}>
                 <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-base transition-all mt-0.5" style={{border:`2px solid ${hb.color}`,background:done?hb.color:"transparent",color:done?"#fff":hb.color}}>{done?"✓":hb.emoji}</div>
                 <div className="flex-1 min-w-0"><p className="text-sm font-medium text-white">{hb.name}</p><p className="text-[11px] text-dash-muted">{badge(hb)}</p></div>
-                {hb.habitType==="numeric"&&(
+                {hb.habitType==="numeric"&&!isSDUnit&&(
                   <div className="flex flex-col items-end gap-1.5 flex-shrink-0" onClick={e=>e.stopPropagation()}>
                     <div className="flex items-center gap-1.5">
                       <button onClick={()=>setNum(hb.id,Math.max(0,Math.round(((numVal??0)*10-5))/10))} className="w-7 h-7 rounded-lg border border-dash-border text-dash-muted hover:text-white text-base flex items-center justify-center transition-colors">−</button>
@@ -682,6 +700,37 @@ export default function HabitsPage() {
                     {isLUnit&&(<div className="flex gap-1">{VESSEL_SIZES.map(amt=>(<button key={amt} onClick={()=>setNum(hb.id,Math.round(((numVal??0)+amt)*10)/10)} className="text-[10px] px-2 py-0.5 rounded-lg border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/40 transition-colors">+{amt*1000}ml</button>))}</div>)}
                   </div>
                 )}
+                {isSDUnit&&(()=>{
+                  const hd=day.drinks[hb.id]||{};
+                  const totalSD=calcDrinkSD(hd);
+                  return(
+                    <div className="flex flex-col items-end gap-2 flex-shrink-0" onClick={e=>e.stopPropagation()}>
+                      {totalSD>0&&(
+                        <span className="text-xs font-medium text-red-400">{totalSD.toFixed(1)} SD gesamt</span>
+                      )}
+                      <div className="flex flex-wrap gap-1 justify-end max-w-[230px]">
+                        {DRINK_BUTTONS.map(d=>{
+                          const cnt=hd[d.label]||0;
+                          return(
+                            <div key={d.label} className="flex items-center gap-0.5">
+                              {cnt>0&&<button onClick={()=>setDrink(hb.id,d.label,-1)} className="w-4 h-4 text-[9px] rounded border border-red-500/30 text-red-400/60 hover:text-red-400 flex items-center justify-center transition-colors">−</button>}
+                              <button onClick={()=>setDrink(hb.id,d.label,1)}
+                                className={clsx("text-[10px] px-2 py-0.5 rounded-lg border transition-colors",
+                                  cnt>0?"border-red-500/40 text-red-300 bg-red-500/10":"border-dash-border text-dash-muted hover:text-white hover:border-red-500/40"
+                                )}>
+                                {cnt>0?`${cnt}× ${d.label}`:`+ ${d.label}`}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {totalSD>0&&(
+                        <button onClick={()=>setHistory(prev=>{const day=normalizeDay(prev[selDate]);day.drinks[hb.id]={};delete day.numeric[hb.id];return{...prev,[selDate]:day};})}
+                          className="text-[10px] text-red-400/40 hover:text-red-400 transition-colors">✕ Reset</button>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
