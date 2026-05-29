@@ -186,7 +186,11 @@ function normalizeDay(raw: unknown): DayData {
 }
 function isCompleted(h: Habit, date: string, history: History): boolean {
   const day = normalizeDay(history[date]);
-  if (h.habitType==="numeric") { const v=day.numeric[h.id]; return v!==undefined && v>=h.numTarget; }
+  if (h.habitType==="numeric") {
+    // SD-Habits: auch alte Checkbox-Einträge als "hatte Alkohol" werten (Rückwärtskompatibilität)
+    if (h.unit.toLowerCase()==="sd" && day.checked.includes(h.id)) return true;
+    const v=day.numeric[h.id]; return v!==undefined && v>=h.numTarget;
+  }
   return day.checked.includes(h.id);
 }
 function calcStreak(h: Habit, history: History): number {
@@ -564,6 +568,26 @@ export default function HabitsPage() {
     if(!form)return;
     if(!form.name?.trim()){setForm(f=>f?{...f,error:"Name fehlt"}:null);return;}
     const entry:Habit={id:form.id||"h"+Date.now(),name:form.name.trim(),emoji:form.emoji||"💧",color:form.color||COLORS[0],habitType:form.habitType||"checkbox",unit:form.unit||"",numTarget:form.numTarget||0,goalType:form.goalType||"daily",goalValue:form.goalValue||1};
+
+    // Migration: Checkbox → Numerisch
+    // Alle Tage wo das Habit als "checked" eingetragen war → numeric-Wert setzen
+    if(form.id && form.habitType==="numeric") {
+      const oldHabit = habits.find(h=>h.id===form.id);
+      if(oldHabit?.habitType==="checkbox") {
+        setHistory(prev=>{
+          const next={...prev};
+          for(const [date,raw] of Object.entries(next)){
+            const day=normalizeDay(raw);
+            if(day.checked.includes(form.id!) && day.numeric[form.id!]===undefined){
+              day.numeric[form.id!]=Math.max(entry.numTarget,0.1);
+              next[date]=day;
+            }
+          }
+          return next;
+        });
+      }
+    }
+
     setHabits(prev=>form.id?prev.map(h=>h.id===form.id?entry:h):[...prev,entry]);
     setForm(null);
   };
