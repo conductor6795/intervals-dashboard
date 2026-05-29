@@ -170,8 +170,8 @@ function fromDS(s: string): Date { const [y,m,d]=s.split("-").map(Number); retur
 function todayStr(): string { return toDS(new Date()); }
 
 function normalizeDay(raw: unknown): DayData {
-  if (!raw) return { checked:[], numeric:{}, mood:null };
-  if (Array.isArray(raw)) return { checked:raw as string[], numeric:{}, mood:null };
+  if (!raw) return { checked:[], numeric:{}, mood:null, drinks:{} };
+  if (Array.isArray(raw)) return { checked:raw as string[], numeric:{}, mood:null, drinks:{} };
   const r = raw as Partial<DayData>;
   return { checked:r.checked||[], numeric:r.numeric||{}, mood:r.mood??null, drinks:r.drinks||{} };
 }
