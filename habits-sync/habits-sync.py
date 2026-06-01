@@ -2,268 +2,224 @@
 """
 habits-sync.py — Dynamischer Sync: habits.json → Notion "🏃 Habits Tracker"
 
-Vollautomatisch:
-  - Liest Habit-Definitionen aus habits.json (Name, Emoji, Typ)
-  - Erstellt fehlende Notion-Spalten automatisch
-  - Löscht KEINE bestehenden Spalten (Datenverlust-Schutz)
-  - Für SD-Habits: Checkbox + Zahl + Aufschlüsselung
+Spalten-Logik:
+  - Checkbox-Habits    → Checkbox-Spalte  "{emoji} {name}"
+  - Wasser (unit L)    → Text-Spalte      "{emoji} {name}" mit "getrunken/ziel" (z.B. "3,7/3,5")
+  - SD-Habits (Alkohol)→ Zahl-Spalte      "{emoji} {name} (SD)"  — kein Checkbox, keine Aufschlüsselung
+  - Andere Zahlen      → Zahl-Spalte      "{emoji} {name}"
+  - Stimmung           → bestehende Spalte "Mood (1-5)" als Zahl
+  - Neue Spalten werden automatisch erstellt
+  - Bestehende Spalten werden NIE gelöscht (Datenverlust-Schutz)
 
-Umgebungsvariablen (.env.local oder systemd-Unit):
-  HABITS_API_URL        — z.B. http://localhost:3003/api/habits
-  HABITS_READ_TOKEN     — Token für /api/habits (falls gesetzt)
-  NOTION_TOKEN = os.environ.get("91d63fe674fdac6cfe69595da51f94795f68a7cffaae6f5f", "")
+Tippfehler oder Umbenennungen in Habit-Namen → COLUMN_ALIASES eintragen
+
+Umgebungsvariablen (.env.local):
+  HABITS_API_URL        — http://localhost:3003/api/habits
+  HABITS_READ_TOKEN     — Token für /api/habits
+  NOTION_HABITS_TOKEN   — Notion Integration Token (ntn_...)
   NOTION_DB_ID          — Notion Datenbank-ID
-  SYNC_DATE             — optional: YYYY-MM-DD (Standard: heute)
-
-Aufruf:
-  python3 /opt/habits-sync/habits-sync.py
-  SYNC_DATE=2026-05-28 python3 /opt/habits-sync/habits-sync.py
+  SYNC_DATE             — optional YYYY-MM-DD (Standard: heute)
 """
 
-import os, json, sys, requests
-from datetime import date as Date, datetime
+import os, sys, requests
+from datetime import date as Date
 
 # ── Konfiguration ─────────────────────────────────────────────────────────────
-HABITS_API_URL  = os.environ.get("HABITS_API_URL",        "http://localhost:3003/api/habits")
-HABITS_TOKEN    = os.environ.get("HABITS_READ_TOKEN",     "")
-NOTION_TOKEN    = os.environ.get("NOTION_HABITS_TOKEN",   "")
-NOTION_DB_ID    = os.environ.get("NOTION_DB_ID",          "3ad27c8ff878491db7dd9b623a05d8e6")
-SYNC_DATE       = os.environ.get("SYNC_DATE",             str(Date.today()))
+HABITS_API_URL = os.environ.get("HABITS_API_URL",      "http://localhost:3003/api/habits")
+HABITS_TOKEN   = os.environ.get("HABITS_READ_TOKEN",   "")
+NOTION_TOKEN   = os.environ.get("NOTION_HABITS_TOKEN", "")
+NOTION_DB_ID   = os.environ.get("NOTION_DB_ID",        "3ad27c8ff878491db7dd9b623a05d8e6")
+SYNC_DATE      = os.environ.get("SYNC_DATE",            str(Date.today()))
 
-NOTION_HEADERS  = {
+NOTION_HEADERS = {
     "Authorization":  f"Bearer {NOTION_TOKEN}",
     "Content-Type":   "application/json",
     "Notion-Version": "2022-06-28",
 }
 
-DRINK_SD = {
-    "0,2L Bier":  0.6,
-    "0,33L Bier": 1.0,
-    "0,5L Bier":  1.5,
-    "Shot":       1.3,
-    "Mische":     1.5,
-    "Cocktail":   1.3,
+# Wenn ein Habit-Name einen Tippfehler hat oder umbenannt wurde,
+# hier den auto-generierten Namen → bestehenden Notion-Spaltennamen mappen.
+# Format: "emoji name (auto-generiert)" → "Notion-Spaltenname (existierend)"
+COLUMN_ALIASES: dict[str, str] = {
+    "💪 Trainigsplan": "💪 Trainingsplan",   # Tippfehler im Habit-Namen
 }
 
+# ── Hilfsfunktionen ───────────────────────────────────────────────────────────
+def fmt(val: float) -> str:
+    """Zahl mit deutschem Komma formatieren."""
+    return f"{val:.1f}".replace(".", ",")
+
+
+def col_name(h: dict, suffix: str = "") -> str:
+    """Notion-Spaltenname aus Habit ableiten, Alias auflösen."""
+    raw = f"{h.get('emoji', '')} {h.get('name', '')}".strip()
+    if suffix:
+        raw = f"{raw} {suffix}"
+    return COLUMN_ALIASES.get(raw, raw)
+
+
 # ── Habits-API ────────────────────────────────────────────────────────────────
-def fetch_habits_data() -> dict:
-    headers = {}
-    if HABITS_TOKEN:
-        headers["x-token"] = HABITS_TOKEN
+def fetch_habits() -> dict:
+    headers = {"x-token": HABITS_TOKEN} if HABITS_TOKEN else {}
     r = requests.get(HABITS_API_URL, headers=headers, timeout=10)
     r.raise_for_status()
     return r.json()
 
 
 # ── Notion: DB-Schema ─────────────────────────────────────────────────────────
-def get_db_properties() -> dict:
-    """Gibt die aktuellen Notion-Spalten zurück: {name: {id, type}}"""
+def get_db_schema() -> dict:
     r = requests.get(
         f"https://api.notion.com/v1/databases/{NOTION_DB_ID}",
         headers=NOTION_HEADERS, timeout=10,
     )
     r.raise_for_status()
-    return {k: {"id": v["id"], "type": v["type"]} for k, v in r.json()["properties"].items()}
+    return {k: v["type"] for k, v in r.json()["properties"].items()}
 
 
-def ensure_property(name: str, notion_type: str, existing: dict) -> dict:
-    """Erstellt eine neue Notion-Spalte falls sie noch nicht existiert."""
-    if name in existing:
-        return existing
-
-    type_config = {
-        "checkbox":   {"checkbox": {}},
-        "number":     {"number": {"format": "number"}},
-        "rich_text":  {"rich_text": {}},
+def ensure_col(name: str, notion_type: str, schema: dict) -> dict:
+    """Erstellt Notion-Spalte falls sie fehlt."""
+    if name in schema:
+        return schema
+    type_cfg = {
+        "checkbox":  {"checkbox": {}},
+        "number":    {"number": {"format": "number"}},
+        "rich_text": {"rich_text": {}},
     }.get(notion_type, {"rich_text": {}})
-
-    payload = {"properties": {name: {**type_config, "name": name}}}
     r = requests.patch(
         f"https://api.notion.com/v1/databases/{NOTION_DB_ID}",
-        headers=NOTION_HEADERS, json=payload, timeout=10,
+        headers=NOTION_HEADERS,
+        json={"properties": {name: {**type_cfg, "name": name}}},
+        timeout=10,
     )
     if r.ok:
         print(f"  ✅ Spalte erstellt: '{name}' ({notion_type})")
-        existing[name] = {"type": notion_type}
+        schema[name] = notion_type
     else:
-        print(f"  ⚠ Spalte '{name}' konnte nicht erstellt werden: {r.text[:100]}")
-    return existing
+        print(f"  ⚠ Spalte '{name}' Fehler: {r.text[:120]}")
+    return schema
 
 
-# ── Notion: Seite finden oder erstellen ──────────────────────────────────────
-def find_notion_page(target_date: str) -> str | None:
-    """Sucht eine bestehende Seite für das Datum."""
-    payload = {
-        "filter": {
-            "property": "Datum",
-            "date": {"equals": target_date},
-        }
-    }
+# ── Notion: Seite finden / erstellen / aktualisieren ─────────────────────────
+def find_page(date_str: str) -> str | None:
     r = requests.post(
         f"https://api.notion.com/v1/databases/{NOTION_DB_ID}/query",
-        headers=NOTION_HEADERS, json=payload, timeout=10,
+        headers=NOTION_HEADERS,
+        json={"filter": {"property": "Datum", "date": {"equals": date_str}}},
+        timeout=10,
     )
     if r.ok:
-        results = r.json().get("results", [])
-        if results:
-            return results[0]["id"]
+        res = r.json().get("results", [])
+        return res[0]["id"] if res else None
     return None
 
 
-def create_notion_page(target_date: str, properties: dict) -> str:
-    """Erstellt eine neue Seite für das Datum."""
-    payload = {
-        "parent": {"database_id": NOTION_DB_ID},
-        "properties": {
-            "Datum": {"date": {"start": target_date}},
-            **properties,
-        },
-    }
-    r = requests.post(
-        "https://api.notion.com/v1/pages",
-        headers=NOTION_HEADERS, json=payload, timeout=10,
-    )
-    r.raise_for_status()
-    return r.json()["id"]
+def upsert_page(date_str: str, props: dict):
+    page_id = find_page(date_str)
+    if page_id:
+        r = requests.patch(
+            f"https://api.notion.com/v1/pages/{page_id}",
+            headers=NOTION_HEADERS,
+            json={"properties": props},
+            timeout=10,
+        )
+        r.raise_for_status()
+        print(f"  ✅ Seite aktualisiert ({date_str})")
+    else:
+        r = requests.post(
+            "https://api.notion.com/v1/pages",
+            headers=NOTION_HEADERS,
+            json={"parent": {"database_id": NOTION_DB_ID},
+                  "properties": {"Datum": {"date": {"start": date_str}}, **props}},
+            timeout=10,
+        )
+        r.raise_for_status()
+        print(f"  ✅ Seite erstellt ({date_str})")
 
 
-def update_notion_page(page_id: str, properties: dict):
-    """Aktualisiert eine bestehende Seite."""
-    r = requests.patch(
-        f"https://api.notion.com/v1/pages/{page_id}",
-        headers=NOTION_HEADERS,
-        json={"properties": properties},
-        timeout=10,
-    )
-    r.raise_for_status()
-
-
-# ── Eigenschaften aufbauen ────────────────────────────────────────────────────
-def build_notion_properties(habits: list, day: dict, drinks_day: dict) -> dict:
+# ── Properties aufbauen ───────────────────────────────────────────────────────
+def build_props(habits: list, day: dict) -> tuple[dict, dict]:
     """
-    Baut den Notion-Properties-Dict für einen Tag.
-    Automatisch aus den Habit-Definitionen abgeleitet.
+    Gibt (properties, benötigte_spalten) zurück.
+    benötigte_spalten: {name: notion_type}
     """
-    checked   = set(day.get("checked", []))
-    numeric   = day.get("numeric", {})
-    props     = {}
+    checked  = set(day.get("checked", []))
+    numeric  = day.get("numeric", {})
+    props    = {}
+    needed   = {}
 
     for h in habits:
         hid   = h["id"]
-        emoji = h.get("emoji", "")
-        name  = h.get("name", "")
         unit  = h.get("unit", "").lower()
         htype = h.get("habitType", "checkbox")
-        col   = f"{emoji} {name}".strip()   # Notion-Spaltenname
+        tgt   = h.get("numTarget", 0)
 
         if unit == "sd":
-            # SD-Habit: Checkbox (hat Alkohol?) + Zahl (Menge) + Aufschlüsselung
-            has_drinks  = hid in checked or (hid in numeric and numeric[hid] > 0)
-            sd_value    = numeric.get(hid, 0)
-            drink_counts = drinks_day.get(hid, {})
+            # Nur SD-Zahl — kein Checkbox, keine Aufschlüsselung
+            c    = col_name(h, "(SD)")
+            val  = numeric.get(hid, 0)
+            needed[c] = "number"
+            if val:
+                props[c] = {"number": round(val, 2)}
 
-            props[col] = {"checkbox": has_drinks}
-            props[f"{col} (SD)"] = {"number": round(sd_value, 2) if sd_value else None}
-
-            if drink_counts:
-                parts = [
-                    f"{cnt}× {drink}"
-                    for drink, cnt in drink_counts.items()
-                    if cnt > 0
-                ]
-                breakdown = f"{', '.join(parts)} = {sd_value} SD"
-                props[f"{col} Aufschlüsselung"] = {
-                    "rich_text": [{"text": {"content": breakdown[:2000]}}]
-                }
+        elif unit in ("l", "liter"):
+            # Wasser: eine Textspalte "getrunken/ziel"
+            c      = col_name(h)
+            actual = numeric.get(hid)
+            needed[c] = "rich_text"
+            if actual is not None:
+                text = f"{fmt(actual)}/{fmt(tgt)}"
+                props[c] = {"rich_text": [{"text": {"content": text}}]}
 
         elif htype == "numeric":
-            # Andere numerische Habits (z.B. Wasser in L)
+            c   = col_name(h)
             val = numeric.get(hid)
-            props[col] = {"number": round(val, 2) if val is not None else None}
+            needed[c] = "number"
+            if val is not None:
+                props[c] = {"number": round(val, 2)}
 
         else:
-            # Checkbox-Habits
-            props[col] = {"checkbox": hid in checked}
+            # Checkbox
+            c = col_name(h)
+            needed[c] = "checkbox"
+            props[c]  = {"checkbox": hid in checked}
 
-    # Stimmung
+    # Stimmung → bestehende "Mood (1-5)" Spalte als Zahl
     mood = day.get("mood")
     if mood is not None:
-        mood_labels = {1: "😴 Sehr schlecht", 2: "😟 Schlecht", 3: "😐 Okay",
-                       4: "😊 Gut", 5: "🔥 Ausgezeichnet"}
-        props["Stimmung"] = {
-            "rich_text": [{"text": {"content": mood_labels.get(mood, str(mood))}}]
-        }
+        needed["Mood (1-5)"] = "number"
+        props["Mood (1-5)"]  = {"number": mood}
 
-    return props
-
-
-# ── Sicherstellen dass alle Spalten in Notion existieren ─────────────────────
-def ensure_all_columns(habits: list, existing: dict) -> dict:
-    """Erstellt fehlende Notion-Spalten für alle aktuellen Habits."""
-    for h in habits:
-        emoji = h.get("emoji", "")
-        name  = h.get("name", "")
-        unit  = h.get("unit", "").lower()
-        htype = h.get("habitType", "checkbox")
-        col   = f"{emoji} {name}".strip()
-
-        if unit == "sd":
-            existing = ensure_property(col,                    "checkbox",  existing)
-            existing = ensure_property(f"{col} (SD)",          "number",    existing)
-            existing = ensure_property(f"{col} Aufschlüsselung", "rich_text", existing)
-        elif htype == "numeric":
-            existing = ensure_property(col, "number", existing)
-        else:
-            existing = ensure_property(col, "checkbox", existing)
-
-    ensure_property("Stimmung", "rich_text", existing)
-    return existing
+    return props, needed
 
 
 # ── Hauptprogramm ─────────────────────────────────────────────────────────────
 def main():
     print(f"🔄 Sync für {SYNC_DATE}")
 
-    # 1. Habits-Daten laden
-    data       = fetch_habits_data()
-    habits     = data.get("habits", [])
-    history    = data.get("history", {})
-    day        = history.get(SYNC_DATE, {})
-    drinks_day = day.get("drinks", {})
+    if not NOTION_TOKEN:
+        print("❌ NOTION_HABITS_TOKEN nicht gesetzt.")
+        sys.exit(1)
 
-    if not habits:
-        print("⚠ Keine Habits gefunden.")
-        sys.exit(0)
+    data    = fetch_habits()
+    habits  = data.get("habits", [])
+    history = data.get("history", {})
+    day     = history.get(SYNC_DATE, {})
 
-    print(f"  Habits: {len(habits)} · Datum: {SYNC_DATE}")
+    print(f"  Habits: {len(habits)}")
 
-    # 2. Notion-Schema laden und fehlende Spalten anlegen
-    print("📐 Prüfe Notion-Spalten …")
-    existing = get_db_properties()
-    existing = ensure_all_columns(habits, existing)
-
-    # 3. Properties aufbauen
-    props = build_notion_properties(habits, day, drinks_day)
-
-    # None-Werte herausfiltern (Notion mag keine None-Zahlen)
-    props = {
-        k: v for k, v in props.items()
-        if not (isinstance(v, dict) and v.get("number") is None)
-    }
+    props, needed = build_props(habits, day)
 
     if not props:
-        print("ℹ Keine Daten für diesen Tag.")
+        print("ℹ Keine Daten für diesen Tag — nichts zu schreiben.")
         return
 
-    # 4. Seite finden oder erstellen
-    page_id = find_notion_page(SYNC_DATE)
+    print("📐 Prüfe Notion-Spalten …")
+    schema = get_db_schema()
+    for name, ntype in needed.items():
+        schema = ensure_col(name, ntype, schema)
 
-    if page_id:
-        update_notion_page(page_id, props)
-        print(f"✅ Seite aktualisiert ({SYNC_DATE}): {list(props.keys())}")
-    else:
-        page_id = create_notion_page(SYNC_DATE, props)
-        print(f"✅ Neue Seite erstellt ({SYNC_DATE}): {list(props.keys())}")
+    upsert_page(SYNC_DATE, props)
+    print(f"  Felder: {list(props.keys())}")
 
 
 if __name__ == "__main__":
