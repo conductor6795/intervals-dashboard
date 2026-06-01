@@ -30,6 +30,7 @@ HABITS_TOKEN   = os.environ.get("HABITS_READ_TOKEN",   "")
 NOTION_TOKEN   = os.environ.get("NOTION_HABITS_TOKEN", "")
 NOTION_DB_ID   = os.environ.get("NOTION_DB_ID",        "3ad27c8ff878491db7dd9b623a05d8e6")
 SYNC_DATE      = os.environ.get("SYNC_DATE",            str(Date.today()))
+BACKFILL       = os.environ.get("BACKFILL", "0") == "1"  # BACKFILL=1 → alle Daten nachladen
 
 NOTION_HEADERS = {
     "Authorization":  f"Bearer {NOTION_TOKEN}",
@@ -170,11 +171,14 @@ def build_props(habits: list, day: dict) -> tuple[dict, dict]:
 
         elif unit in ("l", "liter"):
             # Wasser: eine Textspalte "getrunken/ziel"
+            # Dynamisches Ziel aus history (falls Dashboard es gespeichert hat), sonst numTarget
             c      = col_name(h)
             actual = numeric.get(hid)
+            dyn_targets = day.get("dynamicTargets", {})
+            effective_tgt = dyn_targets.get(hid, tgt)
             needed[c] = "rich_text"
             if actual is not None:
-                text = f"{fmt(actual)}/{fmt(tgt)}"
+                text = f"{fmt(actual)}/{fmt(effective_tgt)}"
                 props[c] = {"rich_text": [{"text": {"content": text}}]}
 
         elif htype == "numeric":
@@ -214,19 +218,26 @@ def main():
 
     print(f"  Habits: {len(habits)}")
 
-    props, needed = build_props(habits, day)
-
-    if not props:
-        print("ℹ Keine Daten für diesen Tag — nichts zu schreiben.")
-        return
-
+    # Alle benötigten Spalten einmalig prüfen/erstellen (aus heutigem Tag ableiten)
     print("📐 Prüfe Notion-Spalten …")
     schema = get_db_schema()
-    for name, ntype in needed.items():
+    _, needed_cols = build_props(habits, day)
+    for name, ntype in needed_cols.items():
         schema = ensure_col(name, ntype, schema)
 
-    upsert_page(SYNC_DATE, props)
-    print(f"  Felder: {list(props.keys())}")
+    # Backfill oder nur heute
+    dates = sorted(history.keys()) if BACKFILL else [SYNC_DATE]
+    print(f"  {'Backfill' if BACKFILL else 'Sync'}: {len(dates)} Tag(e)")
+
+    for d in dates:
+        day_d = history.get(d, {})
+        props, _ = build_props(habits, day_d)
+        if not props:
+            continue
+        try:
+            upsert_page(d, props)
+        except Exception as e:
+            print(f"  ⚠ {d} übersprungen: {e}")
 
 
 if __name__ == "__main__":

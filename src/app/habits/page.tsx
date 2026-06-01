@@ -21,7 +21,7 @@ interface Habit {
   habitType: HabitType; unit: string; numTarget: number;
   goalType: GoalType; goalValue: number;
 }
-interface DayData { checked: string[]; numeric: Record<string, number>; mood: number | null; drinks: Record<string, Record<string, number>>; }
+interface DayData { checked: string[]; numeric: Record<string, number>; mood: number | null; drinks: Record<string, Record<string, number>>; dynamicTargets?: Record<string, number>; }
 type History = Record<string, DayData>;
 interface HabitSettings {
   ivAthleteId: string; ivApiKey: string;
@@ -511,6 +511,14 @@ export default function HabitsPage() {
       setDynamicTargets(newTargets);
       setDynamicInfo(newInfo);
       setHydrationDebug(debugLines.join("\n"));
+      // Dynamische Ziele in history speichern damit habits-sync sie für Notion verwenden kann
+      if (Object.keys(newTargets).length > 0) {
+        setHistory(prev => {
+          const day = normalizeDay(prev[selDate]);
+          const updated = { ...day, dynamicTargets: newTargets };
+          return { ...prev, [selDate]: updated };
+        });
+      }
     };
 
     run();
