@@ -77,9 +77,12 @@ def get_db_schema() -> dict:
 
 
 def ensure_col(name: str, notion_type: str, schema: dict) -> dict:
-    """Erstellt Notion-Spalte falls sie fehlt."""
+    """Erstellt oder korrigiert Notion-Spalte."""
     if name in schema:
-        return schema
+        if schema[name] == notion_type:
+            return schema  # Typ stimmt — nichts zu tun
+        # Falscher Typ → Notion-Spalte aktualisieren
+        print(f"  🔄 Typ-Update: '{name}' ({schema[name]} → {notion_type})")
     type_cfg = {
         "checkbox":  {"checkbox": {}},
         "number":    {"number": {"format": "number"}},
@@ -92,10 +95,10 @@ def ensure_col(name: str, notion_type: str, schema: dict) -> dict:
         timeout=10,
     )
     if r.ok:
-        print(f"  ✅ Spalte erstellt: '{name}' ({notion_type})")
+        print(f"  ✅ Spalte OK: '{name}' ({notion_type})")
         schema[name] = notion_type
     else:
-        print(f"  ⚠ Spalte '{name}' Fehler: {r.text[:120]}")
+        print(f"  ⚠ Spalte '{name}' Fehler: {r.text[:200]}")
     return schema
 
 
@@ -122,7 +125,9 @@ def upsert_page(date_str: str, props: dict):
             json={"properties": props},
             timeout=10,
         )
-        r.raise_for_status()
+        if not r.ok:
+            print(f"  ❌ Update Fehler {r.status_code}: {r.text[:300]}")
+            r.raise_for_status()
         print(f"  ✅ Seite aktualisiert ({date_str})")
     else:
         r = requests.post(
@@ -132,7 +137,9 @@ def upsert_page(date_str: str, props: dict):
                   "properties": {"Datum": {"date": {"start": date_str}}, **props}},
             timeout=10,
         )
-        r.raise_for_status()
+        if not r.ok:
+            print(f"  ❌ Create Fehler {r.status_code}: {r.text[:300]}")
+            r.raise_for_status()
         print(f"  ✅ Seite erstellt ({date_str})")
 
 
