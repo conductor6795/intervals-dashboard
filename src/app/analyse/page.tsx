@@ -7,29 +7,19 @@
  * vergleicht je Habit "aktiv vs. inaktiv" gegen die Recovery-Metriken des
  * NÄCHSTEN Morgens (Lag +1: Abend-Verhalten -> Schlaf/HRV der Folgenacht).
  *
- * Grundprinzipien (bewusst konservativ, n-of-1):
- *  - Korrektes Lag: Habit an Tag D  ->  Wellness an Tag D+lag.
- *  - n-Gating: Ergebnis erscheint erst ab MIN_N pro Gruppe.
- *  - Varianz-Gate: fast immer / fast nie ausgeführte Habits sind nicht
- *    auswertbar (nichts zu vergleichen) und werden ausgeblendet.
- *  - Confound-Hinweis: unterscheidet sich die Trainingslast (TSB) der Gruppen
- *    stark, wird gewarnt (Ruhetag-Effekt statt Habit-Effekt).
- *  - Auto: iteriert über das gefetchte habits[] -> neue Habits erscheinen
- *    automatisch, ohne Code-Änderung.
- *
- * Das ist Hypothesen-Generierung, KEIN Beweis. Korrelation, keine Kausalität.
+ * Darstellung: ein Effekt-Balken um die Null (rechts/grün = bessere Recovery,
+ * links/rot = schlechtere, Länge = Effektstärke). Top-Signale oben, Detail in
+ * den Karten. Bewusst konservativ, n-of-1: Hypothesen, kein Beweis.
  * ============================================================================= */
 
 import { useEffect, useMemo, useState } from "react";
 import { useWellness } from "@/hooks/useWellness";
 import { WellnessDay } from "@/lib/types";
 
-/* ── Schwellen (hier anpassbar) ─────────────────────────────────────────────
-   MIN_N  = Mindest-n pro Gruppe, damit überhaupt ein Vergleich gezeigt wird.
-   Bewusst konservativ. Zum "Reinschauen" auf 6–8 senken (auf eigene Gefahr). */
-const MIN_N = 10;
-const TSB_CONFOUND = 8;        // |ΔTSB| ab hier: Trainingslast-Warnung
-const LOOKBACK_DAYS = 180;     // Wellness-Fenster, das geladen wird
+/* ── Schwellen (hier anpassbar) ───────────────────────────────────────────── */
+const MIN_N = 10;            // Mindest-n pro Gruppe für eine Anzeige
+const TSB_CONFOUND = 8;      // |ΔTSB| ab hier: Trainingslast-Warnung (pro Habit)
+const LOOKBACK_DAYS = 180;   // geladenes Wellness-Fenster
 
 /* ── Lokale Typen (spiegeln /api/habits) ───────────────────────────────────── */
 interface Habit {
@@ -45,16 +35,17 @@ interface DayData {
 }
 type History = Record<string, DayData>;
 
-/* ── Outcome-Konfiguration ─────────────────────────────────────────────────── */
+/* ── Outcomes. `notable` = Δ, das als deutlich gilt (skaliert Balken + Ranking) */
 interface OutcomeCfg {
   key: string; label: string; sub: string; unit: string;
-  good: "high" | "low"; decimals: number; transform?: (v: number) => number;
+  good: "high" | "low"; decimals: number; notable: number;
+  transform?: (v: number) => number;
 }
 const OUTCOMES: OutcomeCfg[] = [
-  { key: "hrv",        label: "HRV",          sub: "nächster Morgen", unit: " ms",  good: "high", decimals: 0 },
-  { key: "restingHR",  label: "Ruhepuls",     sub: "nächster Morgen", unit: " bpm", good: "low",  decimals: 0 },
-  { key: "sleepScore", label: "Schlaf-Score", sub: "Folgenacht",      unit: "",     good: "high", decimals: 0 },
-  { key: "sleepSecs",  label: "Schlafdauer",  sub: "Folgenacht",      unit: " h",   good: "high", decimals: 1, transform: (v) => v / 3600 },
+  { key: "hrv",        label: "HRV",          sub: "nächster Morgen", unit: " ms",  good: "high", decimals: 0, notable: 8 },
+  { key: "restingHR",  label: "Ruhepuls",     sub: "nächster Morgen", unit: " bpm", good: "low",  decimals: 0, notable: 4 },
+  { key: "sleepScore", label: "Schlaf-Score", sub: "Folgenacht",      unit: "",     good: "high", decimals: 0, notable: 8 },
+  { key: "sleepSecs",  label: "Schlafdauer",  sub: "Folgenacht",      unit: " h",   good: "high", decimals: 1, notable: 0.6, transform: (v) => v / 3600 },
 ];
 
 /* ── Helfer ────────────────────────────────────────────────────────────────── */
@@ -83,22 +74,45 @@ function activeWord(h: Habit): string {
   return h.goalType === "max_per_days" ? "konsumiert" : "Ziel erreicht";
 }
 function mean(a: number[]): number { return a.reduce((s, v) => s + v, 0) / a.length; }
-function fmt(v: number | null, dec: number): string {
-  return v == null ? "–" : v.toFixed(dec);
+function fmt(v: number | null, dec: number): string { return v == null ? "–" : v.toFixed(dec); }
+
+/* ── Vertrauens-Stufe nach kleinerer Gruppe ────────────────────────────────── */
+function tier(minN: number): { label: string; cls: string } | null {
+  if (minN < MIN_N) return null;
+  if (minN < 18) return { label: "sehr vorläufig", cls: "text-amber-400" };
+  if (minN < 30) return { label: "vorläufig",      cls: "text-sky-400" };
+  return { label: "erste Tendenz", cls: "text-emerald-400" };
 }
 
-/* ── Analyse-Strukturen ────────────────────────────────────────────────────── */
+/* ── Analyse ───────────────────────────────────────────────────────────────── */
 interface OutcomeResult {
   cfg: OutcomeCfg;
   nDone: number; nNot: number;
   meanDone: number | null; meanNot: number | null;
-  tsbDone: number | null; tsbNot: number | null;
 }
 interface HabitAnalysis {
   habit: Habit;
   active: number; rated: number; rate: number;
   constant: boolean;
+  confound: boolean; tsbDone: number | null; tsbNot: number | null;
   outcomes: OutcomeResult[];
+  topScore: number; // stärkster nicht-vernachlässigbarer, getierter Effekt
+}
+
+/* abgeleitete Werte pro Outcome (für Balken/Ranking) */
+function derive(r: OutcomeResult) {
+  const t = r.meanDone != null && r.meanNot != null ? tier(Math.min(r.nDone, r.nNot)) : null;
+  if (!t || r.meanDone == null || r.meanNot == null) {
+    return { gated: true as const };
+  }
+  const delta = r.meanDone - r.meanNot;
+  const signedGood = r.cfg.good === "high" ? delta : -delta; // >0 => bessere Recovery
+  const score = Math.abs(delta) / r.cfg.notable;
+  const negligible = score < 0.2;
+  const mag = Math.min(1, score);
+  const barCls = negligible ? "bg-slate-500/60" : signedGood > 0 ? "bg-emerald-500" : "bg-rose-500";
+  const txtCls = negligible ? "text-dash-muted" : signedGood > 0 ? "text-emerald-400" : "text-rose-400";
+  return { gated: false as const, delta, signedGood, score, negligible, mag, barCls, txtCls, tierInfo: t };
 }
 
 function analyzeHabit(
@@ -109,111 +123,80 @@ function analyzeHabit(
   const rate = dates.length ? active / dates.length : 0;
   const constant = dates.length === 0 || rate <= 0.1 || rate >= 0.9;
 
+  // Confound auf Habit-Ebene: unterscheidet sich die Trainingslast (TSB) der Gruppen?
+  const tD: number[] = [], tN: number[] = [];
+  for (const d of dates) {
+    const t = tsbOf(byDate[shiftDate(d, lag)]);
+    if (t != null) (habitDone(h, history[d]) ? tD : tN).push(t);
+  }
+  const tsbDone = tD.length ? mean(tD) : null;
+  const tsbNot = tN.length ? mean(tN) : null;
+  const confound = tsbDone != null && tsbNot != null && Math.abs(tsbDone - tsbNot) > TSB_CONFOUND;
+
   const outcomes: OutcomeResult[] = OUTCOMES.map((cfg) => {
-    const dv: number[] = [], nv: number[] = [], dt: number[] = [], nt: number[] = [];
+    const dv: number[] = [], nv: number[] = [];
     for (const d of dates) {
       const w = byDate[shiftDate(d, lag)];
       let val = numField(w, cfg.key);
       if (val == null) continue;
       if (cfg.transform) val = cfg.transform(val);
-      const isDone = habitDone(h, history[d]);
-      (isDone ? dv : nv).push(val);
-      const t = tsbOf(w);
-      if (t != null) (isDone ? dt : nt).push(t);
+      (habitDone(h, history[d]) ? dv : nv).push(val);
     }
     return {
-      cfg,
-      nDone: dv.length, nNot: nv.length,
+      cfg, nDone: dv.length, nNot: nv.length,
       meanDone: dv.length ? mean(dv) : null,
       meanNot: nv.length ? mean(nv) : null,
-      tsbDone: dt.length ? mean(dt) : null,
-      tsbNot: nt.length ? mean(nt) : null,
     };
   });
 
-  return { habit: h, active, rated: dates.length, rate, constant, outcomes };
-}
-
-/* ── Vertrauens-Stufe nach kleinerer Gruppe ────────────────────────────────── */
-function tier(minN: number): { label: string; cls: string } | null {
-  if (minN < MIN_N) return null;
-  if (minN < 18) return { label: "sehr vorläufig", cls: "text-amber-400 border-amber-400/30 bg-amber-400/10" };
-  if (minN < 30) return { label: "vorläufig",      cls: "text-sky-400 border-sky-400/30 bg-sky-400/10" };
-  return { label: "erste Tendenz", cls: "text-emerald-400 border-emerald-400/30 bg-emerald-400/10" };
-}
-
-/* ── UI: einzelne Outcome-Zeile ────────────────────────────────────────────── */
-function OutcomeRow({ r }: { r: OutcomeResult }) {
-  const minN = Math.min(r.nDone, r.nNot);
-  const t = tier(minN);
-
-  if (!t || r.meanDone == null || r.meanNot == null) {
-    const need = Math.max(0, MIN_N - minN);
-    return (
-      <div className="flex items-center justify-between py-2 border-t border-dash-border/60">
-        <div>
-          <span className="text-[13px] text-white">{r.cfg.label}</span>
-          <span className="text-[11px] text-dash-muted ml-2">{r.cfg.sub}</span>
-        </div>
-        <span className="text-[11px] text-dash-muted">
-          noch zu wenig (n={r.nDone}/{r.nNot}{need ? ` · ${need} fehlen` : ""})
-        </span>
-      </div>
-    );
+  let topScore = 0;
+  if (!confound) {
+    for (const r of outcomes) {
+      const dr = derive(r);
+      if (!dr.gated && !dr.negligible && dr.score > topScore) topScore = dr.score;
+    }
   }
 
-  const delta = r.meanDone - r.meanNot;
-  const betterWhenDone = r.cfg.good === "high" ? delta > 0 : delta < 0;
-  const deltaCls = Math.abs(delta) < 0.05
-    ? "text-dash-muted"
-    : betterWhenDone ? "text-emerald-400" : "text-rose-400";
-  const confound =
-    r.tsbDone != null && r.tsbNot != null && Math.abs(r.tsbDone - r.tsbNot) > TSB_CONFOUND;
+  return { habit: h, active, rated: dates.length, rate, constant, confound, tsbDone, tsbNot, outcomes, topScore };
+}
 
-  const scale = Math.max(r.meanDone, r.meanNot) || 1;
-  const wDone = Math.max(4, (r.meanDone / scale) * 100);
-  const wNot = Math.max(4, (r.meanNot / scale) * 100);
-
+/* ── UI: Effekt-Balken um die Null ─────────────────────────────────────────── */
+function EffectBar({ signedGood, mag, barCls }: { signedGood: number; mag: number; barCls: string }) {
+  const right = signedGood > 0;
   return (
-    <div className="py-3 border-t border-dash-border/60">
-      <div className="flex items-center justify-between mb-2">
-        <div>
-          <span className="text-[13px] text-white">{r.cfg.label}</span>
-          <span className="text-[11px] text-dash-muted ml-2">{r.cfg.sub}</span>
-        </div>
-        <span className={`text-[10px] px-2 py-0.5 rounded-full border ${t.cls}`}>{t.label}</span>
-      </div>
+    <div className="relative h-1.5 w-full rounded-full bg-dash-border/40">
+      <div className="absolute inset-y-0 left-1/2 w-px bg-dash-muted/40" />
+      <div
+        className={`absolute inset-y-0 ${barCls} rounded-full`}
+        style={right ? { left: "50%", width: `${mag * 50}%` } : { right: "50%", width: `${mag * 50}%` }}
+      />
+    </div>
+  );
+}
 
-      <div className="space-y-1.5">
-        <div className="flex items-center gap-3">
-          <span className="text-[11px] text-dash-muted w-16 shrink-0">aktiv</span>
-          <div className="flex-1 h-2 rounded-full bg-dash-border/40 overflow-hidden">
-            <div className="h-full rounded-full bg-emerald-500/70" style={{ width: `${wDone}%` }} />
-          </div>
-          <span className="text-[12px] text-white w-20 text-right tabular-nums">
-            {fmt(r.meanDone, r.cfg.decimals)}{r.cfg.unit} <span className="text-dash-muted">·{r.nDone}</span>
-          </span>
+/* ── UI: Outcome-Zeile (nur für getierte) ──────────────────────────────────── */
+function OutcomeRow({ r }: { r: OutcomeResult }) {
+  const dr = derive(r);
+  if (dr.gated) return null;
+  return (
+    <div className="py-2.5 border-t border-dash-border/60">
+      <div className="flex items-center gap-3">
+        <div className="w-24 shrink-0">
+          <div className="text-[12px] text-white leading-tight">{r.cfg.label}</div>
+          <div className="text-[10px] text-dash-muted">{r.cfg.sub}</div>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-[11px] text-dash-muted w-16 shrink-0">inaktiv</span>
-          <div className="flex-1 h-2 rounded-full bg-dash-border/40 overflow-hidden">
-            <div className="h-full rounded-full bg-slate-500/60" style={{ width: `${wNot}%` }} />
+        <div className="flex-1 min-w-0"><EffectBar signedGood={dr.signedGood} mag={dr.mag} barCls={dr.barCls} /></div>
+        <div className="w-24 text-right shrink-0">
+          <div className={`text-[12px] font-medium tabular-nums ${dr.txtCls}`}>
+            {dr.delta > 0 ? "+" : ""}{dr.delta.toFixed(r.cfg.decimals)}{r.cfg.unit}
           </div>
-          <span className="text-[12px] text-white w-20 text-right tabular-nums">
-            {fmt(r.meanNot, r.cfg.decimals)}{r.cfg.unit} <span className="text-dash-muted">·{r.nNot}</span>
-          </span>
+          <div className={`text-[10px] ${dr.tierInfo.cls}`}>{dr.tierInfo.label}</div>
         </div>
       </div>
-
-      <div className="flex items-center gap-2 mt-2">
-        <span className={`text-[12px] font-medium tabular-nums ${deltaCls}`}>
-          Δ {delta > 0 ? "+" : ""}{delta.toFixed(r.cfg.decimals)}{r.cfg.unit}
-        </span>
-        {confound && (
-          <span className="text-[10px] text-amber-400/90 border border-amber-400/30 bg-amber-400/10 rounded-full px-2 py-0.5">
-            ⚠ Trainingslast unterscheidet sich (TSB {fmt(r.tsbDone, 0)} vs {fmt(r.tsbNot, 0)}) – evtl. Ruhetag-Effekt
-          </span>
-        )}
+      <div className="text-[10px] text-dash-muted mt-1 pl-[6.75rem] tabular-nums">
+        aktiv {fmt(r.meanDone, r.cfg.decimals)}{r.cfg.unit} · {r.nDone}
+        <span className="mx-1.5 text-dash-muted/40">|</span>
+        inaktiv {fmt(r.meanNot, r.cfg.decimals)}{r.cfg.unit} · {r.nNot}
       </div>
     </div>
   );
@@ -221,24 +204,64 @@ function OutcomeRow({ r }: { r: OutcomeResult }) {
 
 /* ── UI: Habit-Karte ───────────────────────────────────────────────────────── */
 function HabitCard({ a }: { a: HabitAnalysis }) {
+  const tiered = a.outcomes.filter((r) => !derive(r).gated);
+  const gated = a.outcomes.filter((r) => derive(r).gated);
+
   return (
     <div className="rounded-2xl border border-dash-border bg-dash-card p-5">
-      <div className="flex items-center gap-2 mb-1">
-        <span className="text-lg leading-none">{a.habit.emoji}</span>
-        <h3 className="text-sm font-semibold text-white">{a.habit.name}</h3>
+      <div className="flex items-start justify-between gap-3 mb-1">
+        <div className="flex items-center gap-2">
+          <span className="text-lg leading-none">{a.habit.emoji}</span>
+          <h3 className="text-sm font-semibold text-white">{a.habit.name}</h3>
+        </div>
+        {a.confound && (
+          <span className="text-[10px] text-amber-400 border border-amber-400/30 bg-amber-400/10 rounded-full px-2 py-0.5 shrink-0">
+            ⚠ Trainingslast unterscheidet sich (TSB {fmt(a.tsbDone, 0)} vs {fmt(a.tsbNot, 0)})
+          </span>
+        )}
       </div>
-      <p className="text-[11px] text-dash-muted mb-2">
-        {activeWord(a.habit)} an {a.active}/{a.rated} Tagen (mit Folgetag-Wellness)
+      <p className="text-[11px] text-dash-muted mb-1">
+        {activeWord(a.habit)} an {a.active}/{a.rated} Tagen
+        {a.confound && " · Effekt evtl. nur Ruhetag-Unterschied"}
       </p>
 
-      {a.constant ? (
-        <p className="text-[12px] text-dash-muted border-t border-dash-border/60 pt-3">
-          Zu konstant ({Math.round(a.rate * 100)}% der Tage) – nichts zu vergleichen.
-          Erst auswertbar, wenn dieser Habit mal aktiv und mal inaktiv ist.
+      {tiered.map((r) => <OutcomeRow key={r.cfg.key} r={r} />)}
+
+      {gated.length > 0 && (
+        <p className="text-[10px] text-dash-muted/70 mt-2 pt-2 border-t border-dash-border/60">
+          Noch zu wenig Daten: {gated.map((r) => r.cfg.label).join(", ")} (n &lt; {MIN_N})
         </p>
-      ) : (
-        a.outcomes.map((r) => <OutcomeRow key={r.cfg.key} r={r} />)
       )}
+    </div>
+  );
+}
+
+/* ── UI: Top-Signale ───────────────────────────────────────────────────────── */
+interface Signal { habit: Habit; cfg: OutcomeCfg; delta: number; txtCls: string; tierLabel: string; tierCls: string; score: number; }
+
+function TopSignals({ signals }: { signals: Signal[] }) {
+  if (signals.length === 0) {
+    return (
+      <p className="text-[12px] text-dash-muted">
+        Noch keine Zusammenhänge über dem Rauschen. Sammle weiter – vor allem Alkohol mit Menge
+        und Stimmung täglich, dann erscheinen hier die ersten Tendenzen.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      {signals.map((s, i) => (
+        <div key={i} className="flex items-center gap-3">
+          <span className="text-base leading-none w-5 text-center">{s.habit.emoji}</span>
+          <span className="text-[13px] text-white flex-1 min-w-0 truncate">
+            {s.habit.name} <span className="text-dash-muted">→ {s.cfg.label}</span>
+          </span>
+          <span className={`text-[13px] font-medium tabular-nums ${s.txtCls}`}>
+            {s.delta > 0 ? "+" : ""}{s.delta.toFixed(s.cfg.decimals)}{s.cfg.unit}
+          </span>
+          <span className={`text-[10px] ${s.tierCls} w-20 text-right`}>{s.tierLabel}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -261,7 +284,7 @@ export default function AnalysePage() {
         if (Array.isArray(d?.habits)) setHabits(d.habits);
         if (d?.history && typeof d.history === "object") setHistory(d.history);
       })
-      .catch(() => { /* still: leerer Zustand wird unten behandelt */ })
+      .catch(() => { /* leerer Zustand wird unten behandelt */ })
       .finally(() => { if (alive) setHabitsLoaded(true); });
     return () => { alive = false; };
   }, []);
@@ -277,7 +300,6 @@ export default function AnalysePage() {
     [habits, history, byDate, lag],
   );
 
-  /* Datenreife-Kennzahlen */
   const stats = useMemo(() => {
     const habitDays = Object.keys(history);
     const overlap = habitDays.filter((d) => {
@@ -285,13 +307,33 @@ export default function AnalysePage() {
       return w && (numField(w, "hrv") != null || numField(w, "sleepScore") != null);
     }).length;
     const moodDays = habitDays.filter((d) => history[d].mood != null).length;
-    const constant = analyses.filter((a) => a.constant).map((a) => a.habit.name);
-    return { total: habitDays.length, overlap, moodDays, constant };
-  }, [history, byDate, lag, analyses]);
+    return { total: habitDays.length, overlap, moodDays };
+  }, [history, byDate, lag]);
+
+  const evaluable = useMemo(
+    () => analyses.filter((a) => !a.constant).sort((a, b) => b.topScore - a.topScore),
+    [analyses],
+  );
+  const dormant = analyses.filter((a) => a.constant);
+
+  /* Top-Signale: getiert, nicht confounded, nicht vernachlässigbar, nach Stärke */
+  const signals = useMemo<Signal[]>(() => {
+    const out: Signal[] = [];
+    for (const a of analyses) {
+      if (a.constant || a.confound) continue;
+      for (const r of a.outcomes) {
+        const dr = derive(r);
+        if (dr.gated || dr.negligible) continue;
+        out.push({
+          habit: a.habit, cfg: r.cfg, delta: dr.delta, txtCls: dr.txtCls,
+          tierLabel: dr.tierInfo.label, tierCls: dr.tierInfo.cls, score: dr.score,
+        });
+      }
+    }
+    return out.sort((x, y) => y.score - x.score).slice(0, 5);
+  }, [analyses]);
 
   const loading = wLoading || !habitsLoaded;
-  const evaluable = analyses.filter((a) => !a.constant);
-  const dormant = analyses.filter((a) => a.constant);
 
   return (
     <div className="space-y-4">
@@ -316,38 +358,43 @@ export default function AnalysePage() {
         </div>
       </div>
 
-      {/* Datenreife-Banner */}
+      {/* Top-Signale */}
       <div className="rounded-2xl border border-dash-border bg-dash-card p-5">
-        <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">
-          Datenreife
-        </p>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-3">
-          <div>
-            <div className="text-lg font-semibold text-white tabular-nums">{stats.total}</div>
-            <div className="text-[11px] text-dash-muted">Habit-Tage</div>
-          </div>
-          <div>
-            <div className="text-lg font-semibold text-white tabular-nums">{stats.overlap}</div>
-            <div className="text-[11px] text-dash-muted">davon mit Folgetag-Wellness</div>
-          </div>
-          <div>
-            <div className="text-lg font-semibold text-white tabular-nums">{stats.moodDays}</div>
-            <div className="text-[11px] text-dash-muted">Tage mit Stimmung</div>
-          </div>
-          <div>
-            <div className="text-lg font-semibold text-white tabular-nums">{evaluable.length}</div>
-            <div className="text-[11px] text-dash-muted">auswertbare Habits</div>
-          </div>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium">
+            Stärkste Zusammenhänge
+          </p>
+          <span className="text-[10px] text-dash-muted">
+            rechts/grün = bessere Recovery · links/rot = schlechtere
+          </span>
         </div>
-        <p className="text-[11px] text-dash-muted leading-relaxed">
-          Vergleich „aktiv vs. inaktiv" gegen die Recovery-Werte
-          {lag === 0 ? " desselben Tages" : " des nächsten Morgens"}. Genutzt werden <b>alle</b> erfassten
-          Tage (kein Zeitraumfilter – mehr Daten = belastbarer). Ergebnisse erscheinen erst ab
-          n ≥ {MIN_N} pro Gruppe. Das ist Hypothesen-Suche, kein Beweis: Korrelation ≠ Kausalität,
-          und bei n-of-1-Daten ist vieles Rauschen.
-        </p>
+        {loading
+          ? <p className="text-[12px] text-dash-muted animate-pulse">Lade Daten …</p>
+          : <TopSignals signals={signals} />}
       </div>
 
+      {/* Datenreife (kompakt) */}
+      <div className="rounded-2xl border border-dash-border bg-dash-card px-5 py-4">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+          <span className="text-[11px] text-dash-muted">
+            <b className="text-white tabular-nums">{stats.total}</b> Habit-Tage
+          </span>
+          <span className="text-[11px] text-dash-muted">
+            <b className="text-white tabular-nums">{stats.overlap}</b> mit Folgetag-Wellness
+          </span>
+          <span className="text-[11px] text-dash-muted">
+            <b className="text-white tabular-nums">{stats.moodDays}</b> mit Stimmung
+          </span>
+          <span className="text-[11px] text-dash-muted">
+            <b className="text-white tabular-nums">{evaluable.length}</b> auswertbare Habits
+          </span>
+          <span className="text-[11px] text-dash-muted/70 ml-auto">
+            alle Tage · n ≥ {MIN_N} pro Gruppe · Korrelation ≠ Kausalität
+          </span>
+        </div>
+      </div>
+
+      {/* Karten */}
       {loading ? (
         <div className="rounded-2xl border border-dash-border bg-dash-card p-5 animate-pulse text-[12px] text-dash-muted">
           Lade Habit- und Wellness-Daten …
@@ -363,16 +410,13 @@ export default function AnalysePage() {
           </div>
 
           {dormant.length > 0 && (
-            <div className="rounded-2xl border border-dash-border bg-dash-card p-5">
-              <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-2">
+            <div className="rounded-2xl border border-dash-border bg-dash-card px-5 py-4">
+              <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-1">
                 Nicht auswertbar (zu konstant)
               </p>
               <p className="text-[12px] text-dash-muted">
-                {dormant.map((a) => `${a.habit.emoji} ${a.habit.name}`).join("  ·  ")}
-              </p>
-              <p className="text-[11px] text-dash-muted mt-2">
-                Diese Habits machst du fast immer oder fast nie – ohne Variation gibt es nichts zu
-                vergleichen. Tauchen automatisch auf, sobald sich das ändert.
+                {dormant.map((a) => `${a.habit.emoji} ${a.habit.name}`).join("   ·   ")}
+                <span className="text-dash-muted/60"> — fast immer oder fast nie, also nichts zu vergleichen.</span>
               </p>
             </div>
           )}
