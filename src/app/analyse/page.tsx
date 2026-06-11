@@ -7,9 +7,12 @@
  * vergleicht je Habit "aktiv vs. inaktiv" gegen die Recovery-Metriken des
  * NÄCHSTEN Morgens (Lag +1: Abend-Verhalten -> Schlaf/HRV der Folgenacht).
  *
- * Darstellung: ein Effekt-Balken um die Null (rechts/grün = bessere Recovery,
- * links/rot = schlechtere, Länge = Effektstärke). Top-Signale oben, Detail in
- * den Karten. Bewusst konservativ, n-of-1: Hypothesen, kein Beweis.
+ * Auswahl: pro Habit ein-/ausblendbar. Gespeichert wird nur die Ausschluss-
+ * Liste (/api/analysis-settings) -> neue Habits sind automatisch dabei.
+ *
+ * Darstellung: Effekt-Balken um die Null (rechts/grün = bessere Recovery,
+ * links/rot = schlechtere, Länge = Effektstärke). Top-Signale oben.
+ * Bewusst konservativ, n-of-1: Hypothesen, kein Beweis.
  * ============================================================================= */
 
 import { useEffect, useMemo, useState } from "react";
@@ -96,17 +99,14 @@ interface HabitAnalysis {
   constant: boolean;
   confound: boolean; tsbDone: number | null; tsbNot: number | null;
   outcomes: OutcomeResult[];
-  topScore: number; // stärkster nicht-vernachlässigbarer, getierter Effekt
+  topScore: number;
 }
 
-/* abgeleitete Werte pro Outcome (für Balken/Ranking) */
 function derive(r: OutcomeResult) {
   const t = r.meanDone != null && r.meanNot != null ? tier(Math.min(r.nDone, r.nNot)) : null;
-  if (!t || r.meanDone == null || r.meanNot == null) {
-    return { gated: true as const };
-  }
+  if (!t || r.meanDone == null || r.meanNot == null) return { gated: true as const };
   const delta = r.meanDone - r.meanNot;
-  const signedGood = r.cfg.good === "high" ? delta : -delta; // >0 => bessere Recovery
+  const signedGood = r.cfg.good === "high" ? delta : -delta;
   const score = Math.abs(delta) / r.cfg.notable;
   const negligible = score < 0.2;
   const mag = Math.min(1, score);
@@ -123,7 +123,6 @@ function analyzeHabit(
   const rate = dates.length ? active / dates.length : 0;
   const constant = dates.length === 0 || rate <= 0.1 || rate >= 0.9;
 
-  // Confound auf Habit-Ebene: unterscheidet sich die Trainingslast (TSB) der Gruppen?
   const tD: number[] = [], tN: number[] = [];
   for (const d of dates) {
     const t = tsbOf(byDate[shiftDate(d, lag)]);
@@ -174,7 +173,7 @@ function EffectBar({ signedGood, mag, barCls }: { signedGood: number; mag: numbe
   );
 }
 
-/* ── UI: Outcome-Zeile (nur für getierte) ──────────────────────────────────── */
+/* ── UI: Outcome-Zeile (nur getierte) ──────────────────────────────────────── */
 function OutcomeRow({ r }: { r: OutcomeResult }) {
   const dr = derive(r);
   if (dr.gated) return null;
@@ -206,7 +205,6 @@ function OutcomeRow({ r }: { r: OutcomeResult }) {
 function HabitCard({ a }: { a: HabitAnalysis }) {
   const tiered = a.outcomes.filter((r) => !derive(r).gated);
   const gated = a.outcomes.filter((r) => derive(r).gated);
-
   return (
     <div className="rounded-2xl border border-dash-border bg-dash-card p-5">
       <div className="flex items-start justify-between gap-3 mb-1">
@@ -271,6 +269,7 @@ export default function AnalysePage() {
   const [habits, setHabits] = useState<Habit[]>([]);
   const [history, setHistory] = useState<History>({});
   const [habitsLoaded, setHabitsLoaded] = useState(false);
+  const [hidden, setHidden] = useState<string[]>([]);
   const [lag, setLag] = useState(1);
 
   const { data: wellness, loading: wLoading } = useWellness(LOOKBACK_DAYS);
@@ -288,6 +287,30 @@ export default function AnalysePage() {
       .finally(() => { if (alive) setHabitsLoaded(true); });
     return () => { alive = false; };
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/analysis-settings", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => { if (alive && Array.isArray(d?.hidden)) setHidden(d.hidden); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const isHidden = (id: string) => hidden.includes(id);
+
+  const toggleHabit = (id: string) => {
+    setHidden((cur) => {
+      const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+      // server-persistieren (eigener Store, kein Clobber durch Habits-Seite)
+      fetch("/api/analysis-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hidden: next }),
+      }).catch(() => {});
+      return next;
+    });
+  };
 
   const byDate = useMemo(() => {
     const m: Record<string, WellnessDay> = {};
@@ -310,17 +333,17 @@ export default function AnalysePage() {
     return { total: habitDays.length, overlap, moodDays };
   }, [history, byDate, lag]);
 
+  const visible = analyses.filter((a) => !isHidden(a.habit.id));
   const evaluable = useMemo(
-    () => analyses.filter((a) => !a.constant).sort((a, b) => b.topScore - a.topScore),
-    [analyses],
+    () => visible.filter((a) => !a.constant).sort((a, b) => b.topScore - a.topScore),
+    [visible],
   );
-  const dormant = analyses.filter((a) => a.constant);
+  const dormant = visible.filter((a) => a.constant);
 
-  /* Top-Signale: getiert, nicht confounded, nicht vernachlässigbar, nach Stärke */
   const signals = useMemo<Signal[]>(() => {
     const out: Signal[] = [];
     for (const a of analyses) {
-      if (a.constant || a.confound) continue;
+      if (isHidden(a.habit.id) || a.constant || a.confound) continue;
       for (const r of a.outcomes) {
         const dr = derive(r);
         if (dr.gated || dr.negligible) continue;
@@ -331,7 +354,7 @@ export default function AnalysePage() {
       }
     }
     return out.sort((x, y) => y.score - x.score).slice(0, 5);
-  }, [analyses]);
+  }, [analyses, hidden]);
 
   const loading = wLoading || !habitsLoaded;
 
@@ -357,6 +380,34 @@ export default function AnalysePage() {
           ))}
         </div>
       </div>
+
+      {/* Habit-Auswahl */}
+      {habits.length > 0 && (
+        <div className="rounded-2xl border border-dash-border bg-dash-card px-5 py-4">
+          <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">
+            In Analyse · klick zum Aus-/Einblenden
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {habits.map((h) => {
+              const off = isHidden(h.id);
+              return (
+                <button
+                  key={h.id}
+                  onClick={() => toggleHabit(h.id)}
+                  className={`flex items-center gap-1.5 text-[12px] rounded-full border px-3 py-1 transition-colors ${
+                    off
+                      ? "border-dash-border text-dash-muted/50 hover:text-dash-muted"
+                      : "border-sky-400/40 bg-sky-400/10 text-white"
+                  }`}
+                >
+                  <span className="leading-none">{h.emoji}</span>
+                  <span className={off ? "line-through" : ""}>{h.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Top-Signale */}
       <div className="rounded-2xl border border-dash-border bg-dash-card p-5">
@@ -402,6 +453,10 @@ export default function AnalysePage() {
       ) : habits.length === 0 ? (
         <div className="rounded-2xl border border-dash-border bg-dash-card p-5 text-[12px] text-dash-muted">
           Keine Habits gefunden. Lege im Habit-Tracker Habits an, dann erscheinen sie hier automatisch.
+        </div>
+      ) : evaluable.length === 0 ? (
+        <div className="rounded-2xl border border-dash-border bg-dash-card p-5 text-[12px] text-dash-muted">
+          Keine auswertbaren Habits ausgewählt. Blende oben welche ein.
         </div>
       ) : (
         <>
