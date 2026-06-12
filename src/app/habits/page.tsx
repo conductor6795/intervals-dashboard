@@ -20,6 +20,7 @@ interface Habit {
   id: string; name: string; emoji: string; color: string;
   habitType: HabitType; unit: string; numTarget: number;
   goalType: GoalType; goalValue: number;
+  retroEvening?: boolean; // Abend-Habit: im "Heute"-Tab unter "Letzte Nacht", speichert auf den Vortag
 }
 interface DayData { checked: string[]; numeric: Record<string, number>; mood: number | null; drinks: Record<string, Record<string, number>>; dynamicTargets?: Record<string, number>; }
 type History = Record<string, DayData>;
@@ -527,8 +528,12 @@ export default function HabitsPage() {
 
   const today=todayStr(),isToday=selDate===today;
   const day=useMemo(()=>normalizeDay(history[selDate]),[history,selDate]);
-  const doneCount=useMemo(()=>habits.filter(h=>isCompleted(h,selDate,history)).length,[habits,history,selDate]);
-  const pct=habits.length?doneCount/habits.length:0;
+  const dayHabits=useMemo(()=>habits.filter(h=>!h.retroEvening),[habits]);
+  const retroHabits=useMemo(()=>habits.filter(h=>!!h.retroEvening),[habits]);
+  const prevDS=useMemo(()=>{const d=fromDS(selDate);d.setDate(d.getDate()-1);return toDS(d);},[selDate]);
+  const prevLabel=useMemo(()=>fromDS(prevDS).toLocaleDateString("de-DE",{weekday:"short",day:"numeric",month:"long"}),[prevDS]);
+  const doneCount=useMemo(()=>dayHabits.filter(h=>isCompleted(h,selDate,history)).length,[dayHabits,history,selDate]);
+  const pct=dayHabits.length?doneCount/dayHabits.length:0;
   const selLabel=useMemo(()=>{const d=fromDS(selDate);return{dow:d.toLocaleDateString("de-DE",{weekday:"long"}),dat:d.toLocaleDateString("de-DE",{day:"numeric",month:"long",year:"numeric"})};},[selDate]);
 
   const prevDate=()=>{const d=fromDS(selDate);d.setDate(d.getDate()-1);setSelDate(toDS(d));};
@@ -560,6 +565,10 @@ export default function HabitsPage() {
   const toggleDate=useCallback((hb:Habit,date:string)=>{
     setHistory(prev=>{const day=normalizeDay(prev[date]);if(hb.habitType==="checkbox"){const i=day.checked.indexOf(hb.id);if(i>=0)day.checked.splice(i,1);else day.checked.push(hb.id);}else{if(day.numeric[hb.id]!==undefined)delete day.numeric[hb.id];else day.numeric[hb.id]=hb.numTarget;}return{...prev,[date]:day};});
   },[]);
+  const setNumDate=useCallback((date:string,id:string,raw:string|number)=>{
+    const v=parseFloat(String(raw));
+    setHistory(prev=>{const day=normalizeDay(prev[date]);if(isNaN(v))delete day.numeric[id];else day.numeric[id]=Math.max(0,Math.round(v*10)/10);return{...prev,[date]:day};});
+  },[]);
   const moveHabit=(id:string,dir:-1|1)=>{
     setHabits(prev=>{const i=prev.findIndex(h=>h.id===id),j=i+dir;if(j<0||j>=prev.length)return prev;const next=[...prev];[next[i],next[j]]=[next[j],next[i]];return next;});
   };
@@ -570,12 +579,12 @@ export default function HabitsPage() {
     const l=calcLastDone(h,history);if(l===null)return"Noch nie ✓";return`${l===0?"Heute":l+" Tage her"} ${l>=h.goalValue?"✓":"⚠"}`;
   }
 
-  const openAdd=()=>setForm({id:"",name:"",emoji:"💧",color:"#3b82f6",habitType:"checkbox",unit:"",numTarget:0,goalType:"daily",goalValue:3});
+  const openAdd=()=>setForm({id:"",name:"",emoji:"💧",color:"#3b82f6",habitType:"checkbox",unit:"",numTarget:0,goalType:"daily",goalValue:3,retroEvening:false});
   const openEdit=(h:Habit)=>{setForm({...h});setDelId(null);};
   const saveForm=()=>{
     if(!form)return;
     if(!form.name?.trim()){setForm(f=>f?{...f,error:"Name fehlt"}:null);return;}
-    const entry:Habit={id:form.id||"h"+Date.now(),name:form.name.trim(),emoji:form.emoji||"💧",color:form.color||COLORS[0],habitType:form.habitType||"checkbox",unit:form.unit||"",numTarget:form.numTarget||0,goalType:form.goalType||"daily",goalValue:form.goalValue||1};
+    const entry:Habit={id:form.id||"h"+Date.now(),name:form.name.trim(),emoji:form.emoji||"💧",color:form.color||COLORS[0],habitType:form.habitType||"checkbox",unit:form.unit||"",numTarget:form.numTarget||0,goalType:form.goalType||"daily",goalValue:form.goalValue||1,retroEvening:!!form.retroEvening};
 
     // Migration: Checkbox → Numerisch
     // Alle Tage wo das Habit als "checked" eingetragen war → numeric-Wert setzen
@@ -708,11 +717,11 @@ export default function HabitsPage() {
             {day.mood&&<span className="text-[11px] text-dash-muted ml-1">{MOOD_L[day.mood-1]}</span>}
           </div>
 
-          {habits.length>0&&(<div className="flex items-center gap-3"><div className="flex-1 h-1.5 rounded-full bg-dash-card overflow-hidden border border-dash-border"><div className="h-full rounded-full bg-indigo-500 transition-all duration-300" style={{width:`${Math.round(pct*100)}%`}}/></div><span className="text-xs text-dash-muted tabular-nums">{doneCount}/{habits.length}</span></div>)}
+          {dayHabits.length>0&&(<div className="flex items-center gap-3"><div className="flex-1 h-1.5 rounded-full bg-dash-card overflow-hidden border border-dash-border"><div className="h-full rounded-full bg-indigo-500 transition-all duration-300" style={{width:`${Math.round(pct*100)}%`}}/></div><span className="text-xs text-dash-muted tabular-nums">{doneCount}/{dayHabits.length}</span></div>)}
           {syncState==="offline"&&<div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-4 text-sm text-red-300">⚠ Server nicht erreichbar — Änderungen werden nicht gespeichert.<br/><span className="text-[11px] text-red-300/70">Container läuft? → docker ps | grep intervals</span></div>}
           {habits.length===0&&syncState!=="offline"&&<div className="rounded-2xl border border-dashed border-dash-border p-10 text-center text-dash-muted text-sm">Noch keine Habits.<br/>Im Tab <strong className="text-white">Verwalten</strong> anfangen.</div>}
 
-          {habits.map(hb=>{
+          {dayHabits.map(hb=>{
             const done=isCompleted(hb,selDate,history),numVal=hb.habitType==="numeric"?(day.numeric[hb.id]??null):null;
             const isLUnit=["l","liter"].includes(hb.unit.toLowerCase());
             const isSDUnit=hb.unit.toLowerCase()==="sd";
@@ -775,6 +784,39 @@ export default function HabitsPage() {
               </div>
             );
           })}
+          {retroHabits.length>0&&(
+            <div className="rounded-2xl border border-dash-border bg-dash-card p-3.5 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] uppercase tracking-wider font-medium text-dash-muted">🌙 Letzte Nacht</p>
+                <span className="text-[10px] text-dash-muted">speichert auf {prevLabel}</span>
+              </div>
+              {retroHabits.map(hb=>{
+                const rdone=isCompleted(hb,prevDS,history);
+                const rNum=hb.habitType==="numeric"?(normalizeDay(history[prevDS]).numeric[hb.id]??null):null;
+                return(
+                  <div key={hb.id}
+                    className={clsx("flex items-center gap-3 p-2.5 rounded-xl border bg-dash-bg/40 transition-colors",hb.habitType==="checkbox"&&"cursor-pointer select-none")}
+                    style={{borderColor:rdone?hb.color+"60":undefined}}
+                    onClick={hb.habitType==="checkbox"?()=>toggleDate(hb,prevDS):undefined}
+                    role={hb.habitType==="checkbox"?"checkbox":undefined} aria-checked={hb.habitType==="checkbox"?rdone:undefined}
+                    tabIndex={hb.habitType==="checkbox"?0:undefined}
+                    onKeyDown={hb.habitType==="checkbox"?e=>{if(e.key==="Enter"||e.key===" ")toggleDate(hb,prevDS);}:undefined}>
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-sm" style={{border:`2px solid ${hb.color}`,background:rdone?hb.color:"transparent",color:rdone?"#fff":hb.color}}>{rdone?"✓":hb.emoji}</div>
+                    <div className="flex-1 min-w-0"><p className="text-sm font-medium text-white">{hb.name}</p></div>
+                    {hb.habitType==="numeric"&&(
+                      <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e=>e.stopPropagation()}>
+                        <button onClick={()=>setNumDate(prevDS,hb.id,Math.max(0,Math.round(((rNum??0)*10-5))/10))} className="w-7 h-7 rounded-lg border border-dash-border text-dash-muted hover:text-white text-base flex items-center justify-center transition-colors">−</button>
+                        <input type="number" step="0.5" min="0" value={rNum??""} placeholder="0" onChange={e=>setNumDate(prevDS,hb.id,e.target.value)} onClick={e=>(e.target as HTMLInputElement).select()} className="w-12 text-center text-sm bg-dash-bg border border-dash-border rounded-lg py-1 text-white tabular-nums focus:outline-none focus:border-indigo-500 transition-colors"/>
+                        <button onClick={()=>setNumDate(prevDS,hb.id,Math.round(((rNum??0)*10+5))/10)} className="w-7 h-7 rounded-lg border border-dash-border text-dash-muted hover:text-white text-base flex items-center justify-center transition-colors">+</button>
+                        <span className="text-[11px] text-dash-muted whitespace-nowrap">/{hb.numTarget} {hb.unit}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <p className="text-[10px] text-dash-muted/60">Bezieht sich auf den Abend/die Nacht von {prevLabel} – wird auf diesen Verhaltens-Tag gespeichert, nicht auf {isToday?"heute":"den angezeigten Tag"}.</p>
+            </div>
+          )}
         </>)}
 
         {/* ══ VERLAUF ══ */}
@@ -844,7 +886,7 @@ export default function HabitsPage() {
           {habits.length===0&&!form&&<div className="rounded-2xl border border-dashed border-dash-border p-10 text-center text-dash-muted text-sm">Noch keine Habits.</div>}
           {habits.map((hb,idx)=>{
             if(delId===hb.id)return(<div key={hb.id} className="flex items-center gap-3 p-3 rounded-2xl border border-red-500/30 bg-dash-card text-sm flex-wrap"><span className="flex-1 text-dash-muted min-w-0">„{hb.name}" löschen? (Verlauf bleibt erhalten)</span><button onClick={()=>{setHabits(p=>p.filter(x=>x.id!==hb.id));setDelId(null);}} className="text-xs px-3 py-1.5 rounded-xl text-red-400 border border-red-500/30 hover:bg-red-500/10 transition-colors">Löschen</button><button onClick={()=>setDelId(null)} className="text-xs px-3 py-1.5 rounded-xl text-dash-muted border border-dash-border hover:text-white transition-colors">Abbrechen</button></div>);
-            return(<div key={hb.id} className="flex items-center gap-3 p-3 rounded-2xl border border-dash-border bg-dash-card"><div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-base" style={{background:hb.color+"22"}}>{hb.emoji}</div><div className="flex-1 min-w-0"><p className="text-sm font-medium text-white">{hb.name}</p><p className="text-[11px] text-dash-muted">{hb.habitType==="numeric"?`Numerisch · ${hb.numTarget} ${hb.unit} · `:""}Ziel: {hb.goalType==="daily"?"täglich":hb.goalType==="min_per_week"?`${hb.goalValue}×/Woche`:`alle ${hb.goalValue} Tage`}</p></div><button onClick={()=>moveHabit(hb.id,-1)} disabled={idx===0} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors disabled:opacity-20"><ChevronUp size={14}/></button><button onClick={()=>moveHabit(hb.id,1)} disabled={idx===habits.length-1} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors disabled:opacity-20"><ChevronDown size={14}/></button><button onClick={()=>openEdit(hb)} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors"><Pencil size={14}/></button><button onClick={()=>{setDelId(hb.id);setForm(null);}} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-red-400 transition-colors"><Trash2 size={14}/></button></div>);
+            return(<div key={hb.id} className="flex items-center gap-3 p-3 rounded-2xl border border-dash-border bg-dash-card"><div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-base" style={{background:hb.color+"22"}}>{hb.emoji}</div><div className="flex-1 min-w-0"><p className="text-sm font-medium text-white">{hb.name}</p><p className="text-[11px] text-dash-muted">{hb.habitType==="numeric"?`Numerisch · ${hb.numTarget} ${hb.unit} · `:""}Ziel: {hb.goalType==="daily"?"täglich":hb.goalType==="min_per_week"?`${hb.goalValue}×/Woche`:`alle ${hb.goalValue} Tage`}{hb.retroEvening?" · 🌙 Folgetag":""}</p></div><button onClick={()=>moveHabit(hb.id,-1)} disabled={idx===0} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors disabled:opacity-20"><ChevronUp size={14}/></button><button onClick={()=>moveHabit(hb.id,1)} disabled={idx===habits.length-1} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors disabled:opacity-20"><ChevronDown size={14}/></button><button onClick={()=>openEdit(hb)} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white transition-colors"><Pencil size={14}/></button><button onClick={()=>{setDelId(hb.id);setForm(null);}} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-red-400 transition-colors"><Trash2 size={14}/></button></div>);
           })}
           {!form&&<button onClick={openAdd} className="w-full py-3 rounded-2xl border border-dashed border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/40 transition-colors flex items-center justify-center gap-2 text-sm"><Plus size={15}/> Habit hinzufügen</button>}
           {form&&(
@@ -857,6 +899,7 @@ export default function HabitsPage() {
               <div><label className="text-[11px] text-dash-muted block mb-1">Farbe</label><div className="flex gap-2 flex-wrap">{COLORS.map(c=><button key={c} type="button" onClick={()=>setForm(f=>f?{...f,color:c}:null)} className="w-6 h-6 rounded-full transition-all" style={{background:c,outline:form.color===c?"2px solid white":"2px solid transparent",outlineOffset:2}}/>)}</div></div>
               <div><label className="text-[11px] text-dash-muted block mb-1">Zieltyp</label><select value={form.goalType||"daily"} onChange={e=>setForm(f=>f?{...f,goalType:e.target.value as GoalType}:null)} className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"><option value="daily">Täglich</option><option value="min_per_week">Mindestens X mal pro Woche</option><option value="max_per_days">Höchstens alle X Tage</option></select></div>
               {form.goalType!=="daily"&&<div><label className="text-[11px] text-dash-muted block mb-1">{form.goalType==="min_per_week"?"Anzahl pro Woche":"Intervall in Tagen"}</label><input type="number" min="1" max={form.goalType==="min_per_week"?7:365} value={form.goalValue||1} onChange={e=>setForm(f=>f?{...f,goalValue:Math.max(1,parseInt(e.target.value)||1)}:null)} className="w-24 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>}
+              <div className="pt-1 border-t border-dash-border/60"><label className="flex items-center gap-2 text-sm text-dash-muted cursor-pointer"><input type="checkbox" checked={!!form.retroEvening} onChange={e=>setForm(f=>f?{...f,retroEvening:e.target.checked}:null)}/> Abend-Habit · am Folgetag nachtragen</label><p className="text-[10px] text-dash-muted/60 mt-1 leading-relaxed">Erscheint im „Heute"-Tab unter „🌙 Letzte Nacht". Beim Abhaken wird auf den <strong className="text-white">Vortag</strong> (Verhaltens-Tag) gespeichert – passt zur Recovery-Analyse.</p></div>
               {form.error&&<p className="text-xs text-red-400">{form.error}</p>}
               <div className="flex gap-2 pt-1"><button onClick={saveForm} className="flex-1 py-2 text-sm font-medium rounded-xl text-white transition-colors" style={{backgroundColor:"var(--a-600)"}}>{form.id?"Speichern":"Hinzufügen"}</button><button onClick={()=>setForm(null)} className="px-4 py-2 text-sm text-dash-muted border border-dash-border rounded-xl hover:text-white transition-colors">Abbrechen</button></div>
             </div>
