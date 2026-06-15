@@ -57,17 +57,27 @@ const MOOD_E = ["😴","😟","😐","😊","🔥"];
 const MOOD_L = ["Sehr schlecht","Schlecht","Okay","Gut","Ausgezeichnet"];
 
 /* ── intervals.icu Befinden-Felder ──
-   Werte 1–4. opts[0] = linkeste/„beste" Option = intervals-Wert 1.
-   Feldnamen aus dem Live-Wellness-Record verifiziert. */
+   Jede Option trägt ihren intervals-Wert v (1–4) explizit, damit die
+   Anzeige-Reihenfolge unabhängig von der Kodierung ist.
+   Farbe = Wert: grün(1)=bestes … rot(4)=schlechtestes.
+   Bei Motivation steht "Extrem" rechts (=intensivste Stufe wie bei den
+   anderen Zeilen), behält aber den korrekten intervals-Wert 1.
+   Hydration wird NICHT manuell erfasst → automatisch aus Wasser/Ziel in doSync(). */
 const IV_WELLNESS_FIELDS = [
-  { key:"soreness",   label:"Muskelkater", opts:["Niedrig","Mittel","Hoch","Extrem"]      },
-  { key:"fatigue",    label:"Müdigkeit",   opts:["Niedrig","Mittel","Hoch","Extrem"]      },
-  { key:"stress",     label:"Stress",      opts:["Niedrig","Mittel","Hoch","Extrem"]      },
-  { key:"motivation", label:"Motivation",  opts:["Extrem","Hoch","Mittel","Niedrig"]      },
-  { key:"injury",     label:"Verletzung",  opts:["Keine","Zwicken","Schlecht","Verletzt"] },
-  { key:"hydration",  label:"Hydration",   opts:["Gut","Okay","Schlecht","Sehr schlecht"] },
+  { key:"soreness",   label:"Muskelkater", opts:[{l:"Niedrig",v:1},{l:"Mittel",v:2},{l:"Hoch",v:3},{l:"Extrem",v:4}]   },
+  { key:"fatigue",    label:"Müdigkeit",   opts:[{l:"Niedrig",v:1},{l:"Mittel",v:2},{l:"Hoch",v:3},{l:"Extrem",v:4}]   },
+  { key:"stress",     label:"Stress",      opts:[{l:"Niedrig",v:1},{l:"Mittel",v:2},{l:"Hoch",v:3},{l:"Extrem",v:4}]   },
+  { key:"motivation", label:"Motivation",  opts:[{l:"Niedrig",v:4},{l:"Mittel",v:3},{l:"Hoch",v:2},{l:"Extrem",v:1}]   },
+  { key:"injury",     label:"Verletzung",  opts:[{l:"Keine",v:1},{l:"Zwicken",v:2},{l:"Schlecht",v:3},{l:"Verletzt",v:4}] },
 ] as const;
-const IV_OPT_COLORS = ["#10b981","#3b82f6","#f59e0b","#ef4444"];
+const IV_OPT_COLORS = ["#10b981","#3b82f6","#f59e0b","#ef4444"]; // v1→v4
+/* Hydration (subjektiv, 1–4) aus erreichtem Anteil des Wasserziels */
+function hydrationFromRatio(ratio: number): number {
+  if (ratio >= 1.0) return 1; // Good
+  if (ratio >= 0.8) return 2; // OK
+  if (ratio >= 0.6) return 3; // Poor
+  return 4;                   // Bad
+}
 /* Dashboard-Stimmung (1–5, 1=schlecht) → intervals mood (1=GREAT … 4=GRUMPY) */
 function moodTo4(m: number): number {
   return ({ 5:1, 4:2, 3:3, 2:4, 1:4 } as Record<number, number>)[m] ?? 3;
@@ -106,6 +116,15 @@ function formatDrinkLabel(drinks: Record<string,number>): string {
   if(!parts.length)return"";
   return`${parts.join(", ")} (${calcDrinkSD(drinks)} SD)`;
 }
+
+/* ── Rehydration nach Alkohol (Bänder: 1–3 / 4–6 / >6 SD) ──
+   max = obere SD-Grenze des Bandes; das erste passende Band gewinnt. */
+const REHYDRATION = [
+  { max:3,        band:"1–3 SD", during:"300 ml", lastPortion:"200 ml + 0,5 g Salz", morning:"500 ml + 0,5 g Salz",     ride:"normal" },
+  { max:6,        band:"4–6 SD", during:"500 ml", lastPortion:"300 ml + 0,5 g Salz", morning:"750 ml + 1 g Salz",       ride:"+250 ml/h erste Stunde" },
+  { max:Infinity, band:">6 SD",  during:"750 ml", lastPortion:"500 ml + 1 g Salz",   morning:"1000–1500 ml + 1,5 g Salz", ride:"+500 ml + 1 g Salz erste Stunde" },
+] as const;
+function rehydrationFor(sd: number){ return REHYDRATION.find(r=>sd<=r.max)!; }
 
 /* ══════════════════════════════════════
    HYDRATION — Wissenschaftlich korrigierte Formeln
@@ -675,7 +694,12 @@ export default function HabitsPage() {
       if(v!==undefined&&v>=1&&v<=4) payload[f.key]=v;
     }
 
-    if(waterL!==undefined&&waterL>0)        payload.hydrationVolume=waterL;
+    // Hydration: Volumen (Liter) + subjektiver Wert (1–4) automatisch aus erreichtem Zielanteil
+    if(waterHabit&&waterL!==undefined&&waterL>0){
+      payload.hydrationVolume=waterL;
+      const target=d.dynamicTargets?.[waterHabit.id] ?? waterHabit.numTarget;
+      if(target>0) payload.hydration=hydrationFromRatio(waterL/target);
+    }
     if(d.nutrition?.kcal!==undefined)       payload.kcalConsumed   =d.nutrition.kcal;
     if(d.nutrition?.carbs!==undefined)      payload.carbohydrates  =d.nutrition.carbs;
     if(d.nutrition?.protein!==undefined)    payload.protein        =d.nutrition.protein;
@@ -770,6 +794,20 @@ export default function HabitsPage() {
             <button onClick={nextDate} disabled={isToday} className="p-2 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"><ChevronRight size={15}/></button>
           </div>
 
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={async()=>{
+                if(!settings.ivAthleteId||!settings.ivApiKey){setSyncMsg("✗ Kein API-Key in den Einstellungen");return;}
+                setSyncMsg("Synchronisiere…");
+                const ok=await doSync(selDate);
+                setSyncMsg(ok?`✓ ${new Date().toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})} synchronisiert`:"✗ Sync fehlgeschlagen");
+              }}
+              className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors">
+              <RefreshCw size={12}/> {isToday?"Heute":"Diesen Tag"} → intervals.icu
+            </button>
+            {syncMsg&&<span className="text-[11px] text-dash-muted">{syncMsg}</span>}
+          </div>
+
           <div className="flex items-center gap-2 p-3 rounded-2xl border border-dash-border bg-dash-card flex-wrap">
             <span className="text-[11px] text-dash-muted mr-1">Stimmung</span>
             {MOOD_E.map((e,i)=>(<button key={i} onClick={()=>setMood(i+1)} className={clsx("text-xl rounded-lg p-1 transition-all",day.mood===i+1?"scale-110 bg-white/10":"opacity-50 hover:opacity-100")} title={MOOD_L[i]}>{e}</button>))}
@@ -780,7 +818,7 @@ export default function HabitsPage() {
           <div className="rounded-2xl border border-dash-border bg-dash-card p-3.5 space-y-2.5">
             <div className="flex items-center justify-between">
               <p className="text-[11px] uppercase tracking-wider font-medium text-dash-muted">Befinden → intervals.icu</p>
-              <span className="text-[10px] text-dash-muted/60">links = bestes</span>
+              <span className="text-[10px] text-dash-muted/60">grün = bestes</span>
             </div>
             {IV_WELLNESS_FIELDS.map(f=>{
               const cur=day.wellness?.[f.key];
@@ -788,14 +826,14 @@ export default function HabitsPage() {
                 <div key={f.key} className="flex items-center gap-2 flex-wrap">
                   <span className="text-xs text-white w-[88px] flex-shrink-0">{f.label}</span>
                   <div className="flex gap-1 flex-wrap items-center">
-                    {f.opts.map((opt,i)=>{
-                      const val=i+1,active=cur===val;
+                    {f.opts.map(o=>{
+                      const active=cur===o.v;
                       return(
-                        <button key={opt} onClick={()=>setWellness(f.key,val)}
+                        <button key={o.l} onClick={()=>setWellness(f.key,o.v)}
                           className={clsx("text-[11px] px-2.5 py-1 rounded-lg border transition-colors",
                             active?"text-white border-transparent":"text-dash-muted border-dash-border hover:text-white hover:border-indigo-500/40")}
-                          style={active?{backgroundColor:IV_OPT_COLORS[i]}:{}}>
-                          {opt}
+                          style={active?{backgroundColor:IV_OPT_COLORS[o.v-1]}:{}}>
+                          {o.l}
                         </button>
                       );
                     })}
@@ -804,6 +842,7 @@ export default function HabitsPage() {
                 </div>
               );
             })}
+            <p className="text-[10px] text-dash-muted/50 pt-0.5">Hydration wird automatisch aus Wasser ÷ Tagesziel berechnet und mitgesynct.</p>
           </div>
 
           {/* ── Ernährung → intervals.icu ── */}
@@ -890,6 +929,29 @@ export default function HabitsPage() {
               </div>
             );
           })}
+
+          {/* ── Rehydration nach Alkohol — aktualisiert sich automatisch beim SD-Bandwechsel ── */}
+          {(()=>{
+            const sdHabit=dayHabits.find(h=>h.habitType==="numeric"&&h.unit.toLowerCase()==="sd");
+            if(!sdHabit) return null;
+            const sd=calcDrinkSD(day.drinks[sdHabit.id]||{});
+            if(sd<=0) return null;
+            const r=rehydrationFor(sd);
+            return(
+              <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between flex-wrap gap-1">
+                  <p className="text-[11px] uppercase tracking-wider font-medium text-blue-300">💧 Rehydration nach Alkohol</p>
+                  <span className="text-[11px] text-blue-300/80 tabular-nums">{sd.toFixed(1)} SD · {r.band}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
+                  <div><p className="text-dash-muted">Während/nach dem Trinken</p><p className="text-white">{r.during}</p></div>
+                  <div><p className="text-dash-muted">Letzte Portion (&gt;60 min vor Schlaf)</p><p className="text-white">{r.lastPortion}</p></div>
+                  <div><p className="text-dash-muted">Morgen danach</p><p className="text-white">{r.morning}</p></div>
+                  <div><p className="text-dash-muted">Vor Ride extra</p><p className="text-white">{r.ride}</p></div>
+                </div>
+              </div>
+            );
+          })()}
           {retroHabits.length>0&&(
             <div className="rounded-2xl border border-dash-border bg-dash-card p-3.5 space-y-2.5">
               <div className="flex items-center justify-between">
