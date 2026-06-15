@@ -667,8 +667,7 @@ export default function HabitsPage() {
     setForm(null);
   };
 
-  const doSync=async(date:string):Promise<boolean>=>{
-    if(!settings.ivAthleteId||!settings.ivApiKey)return false;
+  const doSync=async(date:string):Promise<{ok:boolean;error?:string}>=>{
     const d=normalizeDay(history[date]);
     const tags=habits.filter(h=>d.checked.includes(h.id)).map(h=>h.name.replace(/\s+/g,"_"));
     const nums=habits.filter(h=>h.habitType==="numeric"&&d.numeric[h.id]!==undefined).map(h=>{
@@ -704,7 +703,21 @@ export default function HabitsPage() {
     if(d.nutrition?.carbs!==undefined)      payload.carbohydrates  =d.nutrition.carbs;
     if(d.nutrition?.protein!==undefined)    payload.protein        =d.nutrition.protein;
 
-    try{const res=await fetch(`https://intervals.icu/api/v1/athlete/${settings.ivAthleteId}/wellness/${date}`,{method:"PUT",headers:{"Content-Type":"application/json","Authorization":"Basic "+btoa(`API_KEY:${settings.ivApiKey}`)},body:JSON.stringify(payload)});if(!res.ok)throw new Error();setSettings(s=>({...s,lastSync:new Date().toISOString()}));return true;}catch{return false;}
+    // Serverseitig syncen (umgeht Browser-CORS, nutzt INTERVALS_API_KEY aus .env.local)
+    try{
+      const res=await fetch("/api/wellness-sync",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ date, payload }),
+        cache:"no-store",
+      });
+      if(!res.ok){
+        const j=await res.json().catch(()=>({})) as {error?:string};
+        return { ok:false, error:j.error ?? `HTTP ${res.status}` };
+      }
+      setSettings(s=>({...s,lastSync:new Date().toISOString()}));
+      return { ok:true };
+    }catch(e){ return { ok:false, error:String(e) }; }
   };
 
   const corrData=useMemo(()=>Array.from({length:12},(_,w)=>{
@@ -797,10 +810,9 @@ export default function HabitsPage() {
           <div className="flex items-center gap-3 flex-wrap">
             <button
               onClick={async()=>{
-                if(!settings.ivAthleteId||!settings.ivApiKey){setSyncMsg("✗ Kein API-Key in den Einstellungen");return;}
                 setSyncMsg("Synchronisiere…");
-                const ok=await doSync(selDate);
-                setSyncMsg(ok?`✓ ${new Date().toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})} synchronisiert`:"✗ Sync fehlgeschlagen");
+                const r=await doSync(selDate);
+                setSyncMsg(r.ok?`✓ ${new Date().toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})} synchronisiert`:`✗ ${r.error||"Fehlgeschlagen"}`);
               }}
               className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors">
               <RefreshCw size={12}/> {isToday?"Heute":"Diesen Tag"} → intervals.icu
@@ -1098,11 +1110,11 @@ export default function HabitsPage() {
 
           <div className="rounded-2xl border border-dash-border bg-dash-card p-4 space-y-3">
             <p className="text-sm font-semibold text-white">intervals.icu Wellness-Sync</p>
-            <p className="text-xs text-dash-muted leading-relaxed">Habits → Tags · Mood → <code className="text-indigo-300 text-[10px]">motivation</code> · Wasserziel dynamisch via Proxy (kein CORS).</p>
+            <p className="text-xs text-dash-muted leading-relaxed">Befinden, Mood, Hydration &amp; Ernährung → serverseitig via <code className="text-indigo-300 text-[10px]">/api/wellness-sync</code> (nutzt INTERVALS_API_KEY aus .env.local, kein Browser-CORS).</p>
             <div><label className="text-[11px] text-dash-muted block mb-1">Athleten-ID</label><input type="text" value={settings.ivAthleteId} onChange={e=>setSettings(s=>({...s,ivAthleteId:e.target.value}))} placeholder="i12345" className="w-40 px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
             <div><label className="text-[11px] text-dash-muted block mb-1">API-Key</label><input type="password" value={settings.ivApiKey} onChange={e=>setSettings(s=>({...s,ivApiKey:e.target.value}))} placeholder="••••••••" className="w-full px-3 py-2 text-sm bg-dash-bg border border-dash-border rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"/></div>
             <div className="flex items-center gap-3 flex-wrap">
-              <button onClick={async()=>{setSyncMsg("Synchronisiere…");const ok=await doSync(today);setSyncMsg(ok?`✓ ${new Date().toLocaleString("de-DE")}`:"✗ Fehlgeschlagen");}} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><RefreshCw size={12}/> Jetzt sync</button>
+              <button onClick={async()=>{setSyncMsg("Synchronisiere…");const r=await doSync(today);setSyncMsg(r.ok?`✓ ${new Date().toLocaleString("de-DE")}`:`✗ ${r.error||"Fehlgeschlagen"}`);}} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors"><RefreshCw size={12}/> Jetzt sync</button>
               <label className="flex items-center gap-2 text-xs text-dash-muted cursor-pointer"><input type="checkbox" checked={settings.autoSync} onChange={e=>setSettings(s=>({...s,autoSync:e.target.checked}))}/>Auto um <input type="time" value={settings.notifTime} onChange={e=>setSettings(s=>({...s,notifTime:e.target.value}))} className="w-20 px-2 py-1 text-xs bg-dash-bg border border-dash-border rounded-lg text-white focus:outline-none focus:border-indigo-500"/> Uhr</label>
             </div>
             {syncMsg&&<p className="text-[11px] text-dash-muted">{syncMsg}</p>}
