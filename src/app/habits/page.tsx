@@ -22,7 +22,7 @@ interface Habit {
   goalType: GoalType; goalValue: number;
   retroEvening?: boolean; // Abend-Habit: im "Heute"-Tab unter "Letzte Nacht", speichert auf den Vortag
 }
-interface DayData { checked: string[]; numeric: Record<string, number>; mood: number | null; drinks: Record<string, Record<string, number>>; dynamicTargets?: Record<string, number>; }
+interface DayData { checked: string[]; numeric: Record<string, number>; mood: number | null; drinks: Record<string, Record<string, number>>; dynamicTargets?: Record<string, number>; wellness?: Record<string, number>; nutrition?: { kcal?: number; carbs?: number; protein?: number }; }
 type History = Record<string, DayData>;
 interface HabitSettings {
   ivAthleteId: string; ivApiKey: string;
@@ -55,6 +55,28 @@ const COLORS = ["#3b82f6","#10b981","#ef4444","#8b5cf6","#f43f5e","#f59e0b","#84
 const EMOJIS = ["💧","🍺","🏃","🧠","❤️","🌙","🍎","💊","🔥","🚶","🛌","💪","☕","📚","🌿","🚫","✏️","😴"];
 const MOOD_E = ["😴","😟","😐","😊","🔥"];
 const MOOD_L = ["Sehr schlecht","Schlecht","Okay","Gut","Ausgezeichnet"];
+
+/* ── intervals.icu Befinden-Felder ──
+   Werte 1–4. opts[0] = linkeste/„beste" Option = intervals-Wert 1.
+   Feldnamen aus dem Live-Wellness-Record verifiziert. */
+const IV_WELLNESS_FIELDS = [
+  { key:"soreness",   label:"Muskelkater", opts:["Niedrig","Mittel","Hoch","Extrem"]      },
+  { key:"fatigue",    label:"Müdigkeit",   opts:["Niedrig","Mittel","Hoch","Extrem"]      },
+  { key:"stress",     label:"Stress",      opts:["Niedrig","Mittel","Hoch","Extrem"]      },
+  { key:"motivation", label:"Motivation",  opts:["Extrem","Hoch","Mittel","Niedrig"]      },
+  { key:"injury",     label:"Verletzung",  opts:["Keine","Zwicken","Schlecht","Verletzt"] },
+  { key:"hydration",  label:"Hydration",   opts:["Gut","Okay","Schlecht","Sehr schlecht"] },
+] as const;
+const IV_OPT_COLORS = ["#10b981","#3b82f6","#f59e0b","#ef4444"];
+/* Dashboard-Stimmung (1–5, 1=schlecht) → intervals mood (1=GREAT … 4=GRUMPY) */
+function moodTo4(m: number): number {
+  return ({ 5:1, 4:2, 3:3, 2:4, 1:4 } as Record<number, number>)[m] ?? 3;
+}
+const NUTRI_FIELDS = [
+  { key:"kcal"    as const, label:"Kalorien", unit:"kcal", step:10 },
+  { key:"carbs"   as const, label:"Carbs",    unit:"g",    step:5  },
+  { key:"protein" as const, label:"Protein",  unit:"g",    step:5  },
+];
 const DOW    = ["Mo","Di","Mi","Do","Fr","Sa","So"];
 const PERIODS: { id: Period; label: string }[] = [
   { id:"4w", label:"4 Wochen" }, { id:"3m", label:"3 Monate" },
@@ -183,7 +205,7 @@ function normalizeDay(raw: unknown): DayData {
   if (!raw) return { checked:[], numeric:{}, mood:null, drinks:{} };
   if (Array.isArray(raw)) return { checked:raw as string[], numeric:{}, mood:null, drinks:{} };
   const r = raw as Partial<DayData>;
-  return { checked:r.checked||[], numeric:r.numeric||{}, mood:r.mood??null, drinks:r.drinks||{} };
+  return { checked:r.checked||[], numeric:r.numeric||{}, mood:r.mood??null, drinks:r.drinks||{}, dynamicTargets:r.dynamicTargets, wellness:r.wellness, nutrition:r.nutrition };
 }
 function isCompleted(h: Habit, date: string, history: History): boolean {
   const day = normalizeDay(history[date]);
@@ -549,6 +571,23 @@ export default function HabitsPage() {
   const setMood=useCallback((val:number)=>{
     setHistory(prev=>{const day=normalizeDay(prev[selDate]);day.mood=day.mood===val?null:val;return{...prev,[selDate]:day};});
   },[selDate]);
+  const setWellness=useCallback((key:string,val:number)=>{
+    setHistory(prev=>{
+      const day=normalizeDay(prev[selDate]);
+      const w={...(day.wellness||{})};
+      if(w[key]===val)delete w[key]; else w[key]=val;
+      return{...prev,[selDate]:{...day,wellness:w}};
+    });
+  },[selDate]);
+  const setNutrition=useCallback((key:"kcal"|"carbs"|"protein",raw:string)=>{
+    const v=parseFloat(raw);
+    setHistory(prev=>{
+      const day=normalizeDay(prev[selDate]);
+      const n={...(day.nutrition||{})};
+      if(isNaN(v)||raw==="")delete n[key]; else n[key]=Math.max(0,Math.round(v));
+      return{...prev,[selDate]:{...day,nutrition:n}};
+    });
+  },[selDate]);
   const setDrink=useCallback((habitId:string,drinkLabel:string,delta:number)=>{
     setHistory(prev=>{
       const day=normalizeDay(prev[selDate]);
@@ -620,8 +659,28 @@ export default function HabitsPage() {
       }
       return`${h.name}: ${d.numeric[h.id]} ${h.unit}`;
     }).join(", ");
-    const payload={id:date,...(tags.length>0&&{tags}),...(nums&&{comment:`Habit Tracker – ${nums}`}),...(d.mood!==null&&{motivation:d.mood})};
-    try{const res=await fetch(`https://intervals.icu/api/v1/athlete/${settings.ivAthleteId}/wellness`,{method:"PUT",headers:{"Content-Type":"application/json","Authorization":"Basic "+btoa(`API_KEY:${settings.ivApiKey}`)},body:JSON.stringify(payload)});if(!res.ok)throw new Error();setSettings(s=>({...s,lastSync:new Date().toISOString()}));return true;}catch{return false;}
+
+    // Wasser-Habit (Einheit L) → hydrationVolume in Litern
+    const waterHabit=habits.find(h=>h.habitType==="numeric"&&["l","liter"].includes(h.unit.toLowerCase()));
+    const waterL=waterHabit?d.numeric[waterHabit.id]:undefined;
+
+    const payload:Record<string,unknown>={ id:date };
+    if(tags.length>0) payload.tags=tags;
+    if(nums)          payload.comments=`Habit Tracker – ${nums}`;          // Feld heißt "comments" (Plural)
+    if(d.mood!==null) payload.mood=moodTo4(d.mood);                        // 5-Stufen → intervals 1–4
+
+    // Subjektive Befinden-Felder (1–4, 1 = bestes)
+    for(const f of IV_WELLNESS_FIELDS){
+      const v=d.wellness?.[f.key];
+      if(v!==undefined&&v>=1&&v<=4) payload[f.key]=v;
+    }
+
+    if(waterL!==undefined&&waterL>0)        payload.hydrationVolume=waterL;
+    if(d.nutrition?.kcal!==undefined)       payload.kcalConsumed   =d.nutrition.kcal;
+    if(d.nutrition?.carbs!==undefined)      payload.carbohydrates  =d.nutrition.carbs;
+    if(d.nutrition?.protein!==undefined)    payload.protein        =d.nutrition.protein;
+
+    try{const res=await fetch(`https://intervals.icu/api/v1/athlete/${settings.ivAthleteId}/wellness/${date}`,{method:"PUT",headers:{"Content-Type":"application/json","Authorization":"Basic "+btoa(`API_KEY:${settings.ivApiKey}`)},body:JSON.stringify(payload)});if(!res.ok)throw new Error();setSettings(s=>({...s,lastSync:new Date().toISOString()}));return true;}catch{return false;}
   };
 
   const corrData=useMemo(()=>Array.from({length:12},(_,w)=>{
@@ -715,6 +774,53 @@ export default function HabitsPage() {
             <span className="text-[11px] text-dash-muted mr-1">Stimmung</span>
             {MOOD_E.map((e,i)=>(<button key={i} onClick={()=>setMood(i+1)} className={clsx("text-xl rounded-lg p-1 transition-all",day.mood===i+1?"scale-110 bg-white/10":"opacity-50 hover:opacity-100")} title={MOOD_L[i]}>{e}</button>))}
             {day.mood&&<span className="text-[11px] text-dash-muted ml-1">{MOOD_L[day.mood-1]}</span>}
+          </div>
+
+          {/* ── Befinden → intervals.icu (subjektive 1–4-Felder) ── */}
+          <div className="rounded-2xl border border-dash-border bg-dash-card p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] uppercase tracking-wider font-medium text-dash-muted">Befinden → intervals.icu</p>
+              <span className="text-[10px] text-dash-muted/60">links = bestes</span>
+            </div>
+            {IV_WELLNESS_FIELDS.map(f=>{
+              const cur=day.wellness?.[f.key];
+              return(
+                <div key={f.key} className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-white w-[88px] flex-shrink-0">{f.label}</span>
+                  <div className="flex gap-1 flex-wrap items-center">
+                    {f.opts.map((opt,i)=>{
+                      const val=i+1,active=cur===val;
+                      return(
+                        <button key={opt} onClick={()=>setWellness(f.key,val)}
+                          className={clsx("text-[11px] px-2.5 py-1 rounded-lg border transition-colors",
+                            active?"text-white border-transparent":"text-dash-muted border-dash-border hover:text-white hover:border-indigo-500/40")}
+                          style={active?{backgroundColor:IV_OPT_COLORS[i]}:{}}>
+                          {opt}
+                        </button>
+                      );
+                    })}
+                    {cur!==undefined&&<button onClick={()=>setWellness(f.key,cur)} title="Zurücksetzen" className="text-[11px] text-dash-muted/40 hover:text-red-400 px-1 transition-colors">✕</button>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ── Ernährung → intervals.icu ── */}
+          <div className="rounded-2xl border border-dash-border bg-dash-card p-3.5 space-y-3">
+            <p className="text-[11px] uppercase tracking-wider font-medium text-dash-muted">Ernährung → intervals.icu</p>
+            <div className="grid grid-cols-3 gap-2">
+              {NUTRI_FIELDS.map(n=>(
+                <div key={n.key} className="space-y-1">
+                  <label className="text-[11px] text-dash-muted block">{n.label} ({n.unit})</label>
+                  <input type="number" min="0" step={n.step}
+                    value={day.nutrition?.[n.key]??""} placeholder="0"
+                    onChange={e=>setNutrition(n.key,e.target.value)}
+                    onClick={e=>(e.target as HTMLInputElement).select()}
+                    className="w-full px-2 py-1.5 text-sm bg-dash-bg border border-dash-border rounded-lg text-white text-center tabular-nums focus:outline-none focus:border-indigo-500 transition-colors"/>
+                </div>
+              ))}
+            </div>
           </div>
 
           {dayHabits.length>0&&(<div className="flex items-center gap-3"><div className="flex-1 h-1.5 rounded-full bg-dash-card overflow-hidden border border-dash-border"><div className="h-full rounded-full bg-indigo-500 transition-all duration-300" style={{width:`${Math.round(pct*100)}%`}}/></div><span className="text-xs text-dash-muted tabular-nums">{doneCount}/{dayHabits.length}</span></div>)}
