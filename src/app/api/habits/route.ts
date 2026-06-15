@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 // Datenpfad — wird durch docker-compose Volume persistent gemacht:
 // ./habits-data:/app/dataroot  →  DATA_DIR = /app/dataroot
-const DATA_DIR  = process.env.HABITS_DATA_DIR ?? path.join(process.cwd(), "dataroot");
+const DATA_DIR  = process.env.HABITS_DATA_DIR ?? path.join(process.cwd(), "data");
 const DATA_FILE = path.join(DATA_DIR, "habits.json");
 
 // CORS für externe Aufrufe (Artifacts etc.)
