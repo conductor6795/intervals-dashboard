@@ -109,6 +109,7 @@ export type CVZone = "green" | "yellow" | "orange" | "red";
 
 export interface CalculatedMetrics {
   hrv7: number | null;
+  hrvPct: number | null;     // rollender 28-Tage-Perzentil (Hauptsignal Langzeittrend)
   cv: number | null;
   trendRatio: number | null;
   tsb: number | null;        // Training Stress Balance (CTL − ATL), für Anzeige im Dashboard

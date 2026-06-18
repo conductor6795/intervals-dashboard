@@ -1,4 +1,5 @@
 import { WellnessDay, CalculatedMetrics, CVZone, DayMetrics } from "./types";
+import { HRV_PCT, HRV_CV, DAY_SIGNAL, TSB, HARD } from "./athlete";
 
 function clamp(val: number, min: number, max: number) {
   return Math.max(min, Math.min(max, val));
@@ -82,46 +83,178 @@ function sleepHoursToScore(hours: number): number {
 }
 
 /**
- * CV-Ampel nach dem 4-Felder-Modell (Plews et al. 2013):
- *  - Grün:   HRV über Durchschnitt (Trend ≥ 100) + CV niedrig (< 6,5 %)
- *  - Gelb:   HRV über Durchschnitt + CV hoch (≥ 6,5 %)
- *  - Orange: HRV unter Durchschnitt + CV niedrig
- *  - Rot:    HRV unter Durchschnitt + CV hoch
+ * Rollender 28-Tage-Perzentil von hrv7 (athleten-konstanten.md).
+ * Höher = besser erholt. Hauptsignal für den Langzeittrend.
  */
-export function calcCVZone(
-  trendRatio: number | null,
-  cv: number | null
-): { zone: CVZone; label: string; advice: string } {
-  const CV_THRESHOLD = 6.5;
-  const aboveAvg = trendRatio !== null ? trendRatio >= 100 : true;
-  const lowCV = cv !== null ? cv < CV_THRESHOLD : true;
+export function calcHrvPct(days: WellnessDay[]): number | null {
+  const vals = days.map(getHRV).filter((v): v is number => v !== null);
+  if (vals.length < 7) return null;
+  const last28 = vals.slice(-28);
+  const last7 = vals.slice(-7);
+  const hrv7 = last7.reduce((a, b) => a + b, 0) / last7.length;
+  let below = 0;
+  let equal = 0;
+  for (const v of last28) {
+    if (v < hrv7) below++;
+    else if (v === hrv7) equal++;
+  }
+  return Math.round(((below + 0.5 * equal) / last28.length) * 1000) / 10;
+}
 
-  if (aboveAvg && lowCV) {
+/** Tagessignal: heutige HRV relativ zum 7-Tage-Schnitt (athleten-konstanten.md). */
+function hrvDaySignal(
+  hrvToday: number | null,
+  hrv7: number | null
+): "erholt" | "ausbalanciert" | "unausgewogen" | "niedrig" | null {
+  if (hrvToday == null || hrv7 == null || hrv7 === 0) return null;
+  const r = hrvToday / hrv7;
+  if (r < DAY_SIGNAL.low) return "niedrig";
+  if (r < DAY_SIGNAL.imbalanced) return "unausgewogen";
+  if (r > DAY_SIGNAL.recovered) return "erholt";
+  return "ausbalanciert";
+}
+
+/** Hard-Trigger: 3+ Tage in Folge hrv_today < hrv7 × 0.90. */
+function threeDaysHrvDown(days: WellnessDay[]): boolean {
+  const vals = days.map(getHRV).filter((v): v is number => v !== null);
+  if (vals.length < 10) return false;
+  const hrv7 = vals.slice(-7).reduce((a, b) => a + b, 0) / 7;
+  const last3 = vals.slice(-3);
+  return last3.length === 3 && last3.every((v) => v < hrv7 * DAY_SIGNAL.downTrend);
+}
+
+/**
+ * Tagescheck-Verdikt als 4-Stufen-Ampel (ersetzt das alte Plews-Modell).
+ * Quelle: athleten-konstanten.md + tagescheck-SKILL.md (Verdikt-Matrix).
+ *  green  = Plan steht (BEHALTEN)
+ *  yellow = kein HIT, Z2 bleibt (ANPASSEN mild)
+ *  orange = Umfang reduzieren (ANPASSEN strukturell, hrv_pct 5–39)
+ *  red    = Erholung / Ersetzen (Hard-Trigger / kritisch)
+ * HRV ist hier Veto, nicht Treiber: sie kann nur nach unten korrigieren.
+ */
+export function calcAmpel(args: {
+  hrvPct: number | null;
+  hrvToday: number | null;
+  hrv7: number | null;
+  cv: number | null;
+  tsb: number | null;
+  threeDaysDown: boolean;
+}): { zone: CVZone; label: string; advice: string } {
+  const { hrvPct, hrvToday, hrv7, cv, tsb, threeDaysDown } = args;
+
+  if (hrvPct == null) {
     return {
       zone: "green",
-      label: "Optimal – Hart trainieren",
-      advice: "HRV über Durchschnitt, stabile Variabilität. Intensives Training möglich.",
+      label: "Daten unvollständig",
+      advice: "Zu wenige HRV-Messtage für ein Verdikt — nach Plan, beobachten.",
     };
   }
-  if (aboveAvg && !lowCV) {
+
+  // ── Hard-Trigger → ROT ──
+  const hardRed =
+    hrvPct < HARD.HRV_PCT ||
+    (cv != null && cv > HARD.CV && hrvPct < HRV_PCT.suppressed) ||
+    (tsb != null && tsb < HARD.TSB) ||
+    threeDaysDown;
+  if (hardRed) {
     return {
-      zone: "yellow",
-      label: "Variabel – Moderat trainieren",
-      advice: "HRV über Durchschnitt, aber hohe Variabilität. Signal unsicher – moderate Intensität empfohlen.",
+      zone: "red",
+      label: "Erholung – Ersetzen",
+      advice: "Hard-Trigger aktiv (hrv_pct/CV/TSB). Z1 oder Ruhetag, nächste Qualitätseinheit schützen.",
     };
   }
-  if (!aboveAvg && lowCV) {
-    return {
-      zone: "orange",
-      label: "Erholt/Müde – Leicht trainieren",
-      advice: "HRV unter Durchschnitt, stabile Variabilität. Regenerationseinheit oder lockeres Training.",
-    };
+
+  const day = hrvDaySignal(hrvToday, hrv7);
+  const tsbHighLoad = tsb != null && tsb < TSB.productiveFloor; // < −20 (≥ −30, sonst Hard oben)
+
+  // CV-Suspension: transienter Spike, HRV bereits erholt
+  const cvSuspended =
+    cv != null &&
+    cv >= HRV_CV.warn &&
+    cv <= HRV_CV.unstable &&
+    hrvPct >= HRV_PCT.neutral &&
+    hrvToday != null &&
+    hrv7 != null &&
+    hrvToday >= hrv7 * DAY_SIGNAL.suspension;
+
+  // Schweregrad 0=green 1=yellow 2=orange 3=red, restriktivster Wert gewinnt
+  let sev = 0;
+  if (hrvPct < HRV_PCT.suppressed) {
+    sev = Math.max(sev, 2); // 5–19 strukturell niedrig
+  } else if (hrvPct < HRV_PCT.neutral) {
+    sev = Math.max(sev, tsbHighLoad || day === "unausgewogen" ? 3 : 1); // 20–39
+  } else {
+    if (tsbHighLoad) sev = Math.max(sev, 1);
+    if (day === "unausgewogen") sev = Math.max(sev, 1);
   }
-  return {
-    zone: "red",
-    label: "Überlastet – Ruhetag",
-    advice: "HRV unter Durchschnitt und hohe Variabilität. Ruhe oder aktive Erholung empfohlen.",
+  if (day === "niedrig") sev = 3;
+
+  // CV-Overlay (athleten-konstanten.md)
+  if (cv != null) {
+    if (cv > HRV_CV.unstable) {
+      sev = Math.max(sev, hrvPct < HRV_PCT.neutral ? 2 : 1);
+    } else if (cv >= HRV_CV.warn && !cvSuspended) {
+      sev = Math.max(sev, 1);
+    }
+  }
+
+  const zone: CVZone = sev >= 3 ? "red" : sev === 2 ? "orange" : sev === 1 ? "yellow" : "green";
+
+  const LABELS: Record<CVZone, string> = {
+    green: "Plan steht",
+    yellow: "Kein HIT – Z2 bleibt",
+    orange: "Umfang reduzieren",
+    red: "Erholung – Ersetzen",
   };
+  const ADVICE: Record<CVZone, string> = {
+    green: "hrv_pct & Tagessignal grün — geplante Einheit wie vorgesehen.",
+    yellow: cvSuspended
+      ? "CV-Spike transient (HRV erholt) — HIT bliebe frei; sonst Intensität raus, Z2 bleibt."
+      : "Variabilität oder TSB erhöht — Intensität raus, Z2 bleibt.",
+    orange: "Langzeit-HRV gedrückt — Umfang −20 %, höchstens 1 HIT.",
+    red: "Kritischer Trend oder Überlastung — Z1 oder Ruhetag.",
+  };
+
+  return { zone, label: LABELS[zone], advice: ADVICE[zone] };
+}
+
+/**
+ * Trainingsbereitschaft = Garmins nativer Readiness-Score, gedeckelt durch die
+ * Hard-Trigger (HRV als Veto). Gibt null zurück wenn keine Garmin-Readiness da ist
+ * (dann nutzt das Dashboard den hausgemachten Score als Fallback).
+ */
+export function calcVetoedReadiness(
+  garminReadiness: number | null,
+  days: WellnessDay[]
+): { value: number; capped: boolean; reason: string | null } | null {
+  if (garminReadiness == null) return null;
+  if (days.length === 0) return { value: garminReadiness, capped: false, reason: null };
+
+  const hrvPct = calcHrvPct(days);
+  const cv = calcCV(days);
+  const today = days[days.length - 1];
+  const tsb = today.ctl != null && today.atl != null ? today.ctl - today.atl : null;
+  const threeDaysDown = threeDaysHrvDown(days);
+
+  const hardRed =
+    (hrvPct != null && hrvPct < HARD.HRV_PCT) ||
+    (cv != null && cv > HARD.CV && hrvPct != null && hrvPct < HRV_PCT.suppressed) ||
+    (tsb != null && tsb < HARD.TSB) ||
+    threeDaysDown;
+  if (hardRed) {
+    return { value: Math.min(garminReadiness, 24), capped: true, reason: "Hard-Trigger — Veto auf Ruhetag." };
+  }
+
+  const caution = (hrvPct != null && hrvPct < HRV_PCT.suppressed) || (cv != null && cv > HARD.CV);
+  if (caution) {
+    return {
+      value: Math.min(garminReadiness, 49),
+      capped: garminReadiness > 49,
+      reason: "HRV/CV gedrückt — Veto auf max. Moderat.",
+    };
+  }
+
+  return { value: garminReadiness, capped: false, reason: null };
 }
 
 /**
@@ -290,6 +423,7 @@ export function calcAllMetrics(days: WellnessDay[]): CalculatedMetrics {
   if (days.length === 0) {
     return {
       hrv7: null,
+      hrvPct: null,
       cv: null,
       trendRatio: null,
       tsb: null,
@@ -302,15 +436,24 @@ export function calcAllMetrics(days: WellnessDay[]): CalculatedMetrics {
   }
   const today = days[days.length - 1];
   const hrv7 = calcHRV7(days);
+  const hrvPct = calcHrvPct(days);
   const cv = calcCV(days);
   const trendRatio = calcTrendRatio(getHRV(today), hrv7);
   const tsb = (today.ctl != null && today.atl != null) ? today.ctl - today.atl : null;
   const trainingReadiness = calcTrainingReadiness(today, days);
   const recoveryScore = calcRecoveryScore(today, days);
-  const { zone, label, advice } = calcCVZone(trendRatio, cv);
+  const { zone, label, advice } = calcAmpel({
+    hrvPct,
+    hrvToday: getHRV(today),
+    hrv7,
+    cv,
+    tsb,
+    threeDaysDown: threeDaysHrvDown(days),
+  });
 
   return {
     hrv7,
+    hrvPct,
     cv,
     trendRatio,
     tsb,

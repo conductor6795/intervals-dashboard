@@ -18,8 +18,10 @@ import PeriodSelector from "@/components/ui/PeriodSelector";
 
 import { useWellness } from "@/hooks/useWellness";
 import { useActivities, useEvents } from "@/hooks/useActivities";
+import { useGarmin } from "@/hooks/useGarmin";
 import { usePeriod } from "@/hooks/usePeriod";
-import { calcAllMetrics, getHRV, calcValueTrend } from "@/lib/calculations";
+import { calcAllMetrics, getHRV, calcValueTrend, calcVetoedReadiness } from "@/lib/calculations";
+import { HRV_CV } from "@/lib/athlete";
 import { WellnessDay } from "@/lib/types";
 import { getPageSettings } from "@/lib/settings";
 
@@ -107,6 +109,11 @@ export default function OverviewPage() {
   const metrics = useMemo(() => calcAllMetrics(wellness), [wellness]);
   const trends  = useMemo(() => buildTrends(wellness), [wellness]);
 
+  const { data: garmin } = useGarmin();
+  const garminToday = garmin[garmin.length - 1];
+  const vetoed = calcVetoedReadiness(garminToday?.readinessScore ?? null, wellness);
+  const readinessValue = vetoed ? vetoed.value : metrics.trainingReadiness;
+
   const today      = wellness[wellness.length - 1];
   const todayHRV   = today ? getHRV(today) : null;
   const latestCTL  = today?.ctl;
@@ -190,7 +197,7 @@ export default function OverviewPage() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-stretch">
               <Link href="/hrv" className="flex">
                 <div className="w-full hover:opacity-90 transition-opacity">
-                  <TrainingReadiness value={metrics.trainingReadiness} />
+                  <TrainingReadiness value={readinessValue} />
                 </div>
               </Link>
               <Link href="/hrv" className="flex">
@@ -202,12 +209,9 @@ export default function OverviewPage() {
                 zone={metrics.cvZone}
                 label={metrics.cvZoneLabel}
                 advice={metrics.cvZoneAdvice}
-                trendRatio={metrics.trendRatio}
+                hrvPct={metrics.hrvPct}
                 cv={metrics.cv}
                 tsb={latestTSB}
-                readiness={metrics.trainingReadiness}
-                ctl={latestCTL ?? null}
-                weeklyHours={weeklyHours}
               />
             </div>
           )}
@@ -246,8 +250,8 @@ export default function OverviewPage() {
                 label={<Tooltip term="CV">CV</Tooltip>}
                 value={metrics.cv != null ? `${metrics.cv.toFixed(1)}` : null}
                 unit="%"
-                color={metrics.cv != null && metrics.cv < 6.5 ? "text-emerald-400" : "text-yellow-400"}
-                sub={metrics.cv != null ? (metrics.cv < 6.5 ? "Stabil" : "Variabel") : undefined}
+                color={metrics.cv != null && metrics.cv < HRV_CV.warn ? "text-emerald-400" : "text-yellow-400"}
+                sub={metrics.cv != null ? (metrics.cv < HRV_CV.warn ? "Stabil" : "Variabel") : undefined}
                 href="/hrv"
               />
               <MetricCard
