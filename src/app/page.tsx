@@ -1,4 +1,6 @@
 "use client";
+import GarminCards from "@/components/overview/GarminCards";
+import WeatherCard from "@/components/overview/WeatherCard";
 import { useMemo, useState, useEffect } from "react";
 import { RefreshCw, Heart, Scale, TrendingUp, Moon, Zap, Activity, Dumbbell } from "lucide-react";
 import { format } from "date-fns";
@@ -165,6 +167,17 @@ export default function OverviewPage() {
             : <TodayWorkout events={events} activities={activities} athleteId={athleteId} />
           }
         </section>
+
+        {/* Wetter */}
+        <section>
+          <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">Heute in Coesfeld</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            <WeatherCard />
+          </div>
+        </section>
+
+        {/* Garmin */}
+        <GarminCards />
 
         {/* Haupt-Metriken: Readiness + Recovery + CV-Ampel */}
         <section>
