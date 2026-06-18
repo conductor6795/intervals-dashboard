@@ -1,138 +1,97 @@
 "use client";
 import { clsx } from "clsx";
 import { CVZone } from "@/lib/types";
+import { HRV_PCT, HRV_CV } from "@/lib/athlete";
 
 interface Props {
   zone: CVZone;
   label: string;
   advice: string;
-  trendRatio: number | null;
+  hrvPct: number | null;
   cv: number | null;
+  tsb: number | null;
   hrv7: number | null;
 }
 
-const ZONES: { zone: CVZone; aboveAvg: boolean; lowCV: boolean; title: string; color: string; activeBg: string; dot: string }[] = [
-  {
-    zone: "green",
-    aboveAvg: true,
-    lowCV: true,
-    title: "Grün",
-    color: "text-emerald-400",
-    activeBg: "bg-emerald-500",
-    dot: "bg-emerald-500",
-  },
-  {
-    zone: "yellow",
-    aboveAvg: true,
-    lowCV: false,
-    title: "Gelb",
-    color: "text-yellow-400",
-    activeBg: "bg-yellow-400",
-    dot: "bg-yellow-400",
-  },
-  {
-    zone: "orange",
-    aboveAvg: false,
-    lowCV: true,
-    title: "Orange",
-    color: "text-orange-400",
-    activeBg: "bg-orange-500",
-    dot: "bg-orange-500",
-  },
-  {
-    zone: "red",
-    aboveAvg: false,
-    lowCV: false,
-    title: "Rot",
-    color: "text-red-400",
-    activeBg: "bg-red-500",
-    dot: "bg-red-500",
-  },
+const LADDER: { zone: CVZone; title: string; verdict: string; dot: string; activeBg: string; color: string }[] = [
+  { zone: "green",  title: "Grün",   verdict: "Plan steht",          dot: "bg-emerald-500", activeBg: "bg-emerald-500", color: "text-emerald-400" },
+  { zone: "yellow", title: "Gelb",   verdict: "Kein HIT – Z2 bleibt", dot: "bg-yellow-400",  activeBg: "bg-yellow-400",  color: "text-yellow-400" },
+  { zone: "orange", title: "Orange", verdict: "Umfang reduzieren",   dot: "bg-orange-500",  activeBg: "bg-orange-500",  color: "text-orange-400" },
+  { zone: "red",    title: "Rot",    verdict: "Erholung – Ersetzen",  dot: "bg-red-500",     activeBg: "bg-red-500",     color: "text-red-400" },
 ];
 
-const ZONE_LABELS: Record<CVZone, string> = {
-  green: "Hart trainieren",
-  yellow: "Moderat trainieren",
-  orange: "Leicht trainieren",
-  red: "Ruhetag",
-};
+function hrvPctTag(p: number | null): string {
+  if (p == null) return "–";
+  const v = p.toFixed(0);
+  if (p >= HRV_PCT.balanced) return `${v} % · ausbalanciert`;
+  if (p >= HRV_PCT.neutral) return `${v} % · neutral`;
+  if (p >= HRV_PCT.suppressed) return `${v} % · leicht gedrückt`;
+  if (p >= HRV_PCT.critical) return `${v} % · strukturell niedrig`;
+  return `${v} % · kritisch`;
+}
+function cvTag(cv: number | null): string {
+  if (cv == null) return "–";
+  const v = cv.toFixed(1);
+  if (cv < HRV_CV.warn) return `${v} % · stabil`;
+  if (cv <= HRV_CV.unstable) return `${v} % · Warnzone`;
+  return `${v} % · instabil`;
+}
+function tsbTag(tsb: number | null): string {
+  if (tsb == null) return "–";
+  const v = tsb.toFixed(0);
+  if (tsb > 0) return `${v} · frisch`;
+  if (tsb >= -20) return `${v} · produktiv`;
+  if (tsb >= -30) return `${v} · hoch belastet`;
+  return `${v} · Überlastung`;
+}
 
-export default function CVAmpel({ zone, label, advice, trendRatio, cv, hrv7 }: Props) {
-  const activeZone = ZONES.find((z) => z.zone === zone);
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between text-xs">
+      <span className="text-dash-muted">{label}</span>
+      <span className="text-white font-medium tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+export default function CVAmpel({ zone, label, advice, hrvPct, cv, tsb, hrv7 }: Props) {
+  const active = LADDER.find((z) => z.zone === zone);
 
   return (
     <div className="flex flex-col p-5 rounded-xl border border-dash-border bg-dash-card h-full">
-      <span className="text-xs text-dash-muted uppercase tracking-wider mb-4">CV-Ampel</span>
+      <span className="text-xs text-dash-muted uppercase tracking-wider mb-1">Tagescheck-Verdikt</span>
+      <span className="text-[10px] text-dash-muted mb-4">hrv_pct (Veto) · CV · TSB — HRV korrigiert nur nach unten</span>
 
-      {/* 2×2 Grid */}
-      <div className="grid grid-cols-2 gap-1.5 mb-4">
-        {/* Zeile 1: HRV über Durchschnitt */}
-        {ZONES.filter((z) => z.aboveAvg).map((z) => (
+      {/* Verdikt-Leiter */}
+      <div className="flex flex-col gap-1.5 mb-4">
+        {LADDER.map((z) => (
           <div
             key={z.zone}
             className={clsx(
-              "rounded-lg p-2.5 flex flex-col gap-1 border transition-all",
+              "rounded-lg px-3 py-2 flex items-center gap-2.5 border transition-all",
               zone === z.zone
                 ? `${z.activeBg} border-transparent text-white`
                 : "border-dash-border bg-dash-bg text-dash-muted"
             )}
           >
-            <div className="flex items-center gap-1.5">
-              <div className={clsx("w-2 h-2 rounded-full", z.dot)} />
-              <span className="text-[10px] font-semibold uppercase">{z.title}</span>
-            </div>
-            <span className={clsx("text-[9px] leading-tight", zone === z.zone ? "text-white/80" : "")}>
-              {ZONE_LABELS[z.zone]}
-            </span>
-          </div>
-        ))}
-        {/* Zeile 2: HRV unter Durchschnitt */}
-        {ZONES.filter((z) => !z.aboveAvg).map((z) => (
-          <div
-            key={z.zone}
-            className={clsx(
-              "rounded-lg p-2.5 flex flex-col gap-1 border transition-all",
-              zone === z.zone
-                ? `${z.activeBg} border-transparent text-white`
-                : "border-dash-border bg-dash-bg text-dash-muted"
-            )}
-          >
-            <div className="flex items-center gap-1.5">
-              <div className={clsx("w-2 h-2 rounded-full", z.dot)} />
-              <span className="text-[10px] font-semibold uppercase">{z.title}</span>
-            </div>
-            <span className={clsx("text-[9px] leading-tight", zone === z.zone ? "text-white/80" : "")}>
-              {ZONE_LABELS[z.zone]}
-            </span>
+            <div className={clsx("w-2 h-2 rounded-full flex-shrink-0", z.dot)} />
+            <span className="text-[10px] font-semibold uppercase w-12 flex-shrink-0">{z.title}</span>
+            <span className={clsx("text-[11px] leading-tight", zone === z.zone ? "text-white/85" : "")}>{z.verdict}</span>
           </div>
         ))}
       </div>
 
-      {/* Achsenbeschriftungen */}
-      <div className="flex justify-between text-[9px] text-dash-muted mb-1 px-0.5">
-        <span>↑ HRV über Ø (Zeile 1)</span>
-        <span>CV &lt; 6,5 % | CV ≥ 6,5 %</span>
+      {/* Treibende Signale */}
+      <div className="mt-1 pt-3 border-t border-dash-border space-y-1">
+        <Row label="hrv_pct (28-Tage-Perzentil)" value={hrvPctTag(hrvPct)} />
+        <Row label="CV (7 Tage)" value={cvTag(cv)} />
+        <Row label="TSB (Form)" value={tsbTag(tsb)} />
+        <Row label="HRV7 (Ø 7 Tage)" value={hrv7 != null ? hrv7.toFixed(1) : "–"} />
       </div>
 
-      {/* Aktuelle Werte */}
-      <div className="mt-3 pt-3 border-t border-dash-border space-y-1">
-        <div className="flex justify-between text-xs">
-          <span className="text-dash-muted">HRV7 (Ø 7 Tage)</span>
-          <span className="text-white font-medium tabular-nums">{hrv7 != null ? hrv7.toFixed(1) : "–"}</span>
-        </div>
-        <div className="flex justify-between text-xs">
-          <span className="text-dash-muted">CV</span>
-          <span className="text-white font-medium tabular-nums">{cv != null ? `${cv.toFixed(1)} %` : "–"}</span>
-        </div>
-        <div className="flex justify-between text-xs">
-          <span className="text-dash-muted">Trend-Ratio</span>
-          <span className="text-white font-medium tabular-nums">{trendRatio != null ? `${trendRatio.toFixed(1)} %` : "–"}</span>
-        </div>
-      </div>
-
-      {/* Empfehlung */}
-      <div className={clsx("mt-3 p-2.5 rounded-lg text-[11px] leading-snug", activeZone ? `${activeZone.activeBg}/15` : "bg-dash-bg")}>
-        <p className={clsx("font-semibold mb-0.5", activeZone?.color)}>{label}</p>
+      {/* Verdikt + Hinweis */}
+      <div className={clsx("mt-3 p-2.5 rounded-lg text-[11px] leading-snug", active ? `${active.activeBg}/15` : "bg-dash-bg")}>
+        <p className={clsx("font-semibold mb-0.5", active?.color)}>{label}</p>
         <p className="text-dash-muted">{advice}</p>
       </div>
     </div>

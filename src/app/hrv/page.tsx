@@ -9,7 +9,8 @@ import CVAmpel from "@/components/metrics/CVAmpel";
 import HRVChart from "@/components/charts/HRVChart";
 
 import { useWellness } from "@/hooks/useWellness";
-import { calcAllMetrics, buildDailyMetrics, getHRV } from "@/lib/calculations";
+import { useGarmin } from "@/hooks/useGarmin";
+import { calcAllMetrics, buildDailyMetrics, getHRV, calcVetoedReadiness } from "@/lib/calculations";
 import { usePeriod } from "@/hooks/usePeriod";
 import PeriodSelector from "@/components/ui/PeriodSelector";
 import Tooltip from "@/components/ui/Tooltip";
@@ -53,6 +54,11 @@ export default function HRVPage() {
   const metrics = useMemo(() => calcAllMetrics(wellness), [wellness]);
   const dailyMetrics = useMemo(() => buildDailyMetrics(wellness), [wellness]);
 
+  const { data: garmin } = useGarmin();
+  const garminToday = garmin[garmin.length - 1];
+  const vetoed = calcVetoedReadiness(garminToday?.readinessScore ?? null, wellness);
+  const readinessValue = vetoed ? vetoed.value : metrics.trainingReadiness;
+
   const today = wellness[wellness.length - 1];
   const todayHRV = today ? getHRV(today) : null;
 
@@ -80,7 +86,7 @@ export default function HRVPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <TrainingReadiness value={metrics.trainingReadiness} />
+              <TrainingReadiness value={readinessValue} />
               <RecoveryScore value={metrics.recoveryScore} />
             </div>
           )}
@@ -100,8 +106,9 @@ export default function HRVPage() {
                 zone={metrics.cvZone}
                 label={metrics.cvZoneLabel}
                 advice={metrics.cvZoneAdvice}
-                trendRatio={metrics.trendRatio}
+                hrvPct={metrics.hrvPct}
                 cv={metrics.cv}
+                tsb={metrics.tsb}
                 hrv7={metrics.hrv7}
               />
               {/* Zusatz-Wellness */}
@@ -112,6 +119,7 @@ export default function HRVPage() {
                     <StatRow label={<Tooltip term="HRV">HRV (heute)</Tooltip>} value={todayHRV != null ? `${todayHRV.toFixed(1)} ms` : "–"} />
                     <StatRow label={<Tooltip term="HRV">HRV7 (Ø 7 Tage)</Tooltip>} value={metrics.hrv7 != null ? `${metrics.hrv7.toFixed(1)} ms` : "–"} />
                     <StatRow label="Trend-Ratio" value={metrics.trendRatio != null ? `${metrics.trendRatio.toFixed(1)} %` : "–"} />
+                    <StatRow label="hrv_pct (28-Tage-Perzentil)" value={metrics.hrvPct != null ? `${metrics.hrvPct.toFixed(0)} %` : "–"} />
                     <StatRow label={<Tooltip term="CV">CV</Tooltip>} value={metrics.cv != null ? `${metrics.cv.toFixed(1)} %` : "–"} />
                     <StatRow label={<Tooltip term="RHR">Ruhepuls</Tooltip>} value={today.restingHR != null ? `${today.restingHR} bpm` : "–"} />
                     {today.sleepScore != null && <StatRow label="Schlaf-Score" value={`${today.sleepScore}`} />}
@@ -142,12 +150,12 @@ export default function HRVPage() {
           <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">Berechnungsmethodik</p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-dash-muted">
             <div className="space-y-1.5">
-              <p><span className="text-white font-medium">Trainingsbereitschaft</span> – HRV-Trend 40 % · Schlaf 25 % · RHR 15 % · Subjektiv 15 % · CV 5 %</p>
-              <p><span className="text-white font-medium">Subjektiv-Gewichtung</span> – Erschöpfung 35 % · Kater 30 % · Stimmung 20 % · Motivation 15 %</p>
+              <p><span className="text-white font-medium">Trainingsbereitschaft</span> – Garmins nativer Readiness-Score (Schlaf, HRV, Erholungszeit, akute Last, Stress), nach unten gedeckelt durch die Hard-Trigger. HRV wirkt als Veto, nicht als Treiber.</p>
+              <p><span className="text-white font-medium">Tagescheck-Verdikt</span> – hrv_pct (rollender 28-Tage-Perzentil) + Tagessignal (hrv_today/hrv7) + CV + TSB. Hard-Trigger erzwingen Rot.</p>
             </div>
             <div className="space-y-1.5">
-              <p><span className="text-white font-medium">Erholung</span> – HRV-Ratio 40 % · Schlaf 30 % · RHR 15 % · Erschöpfung+Kater 15 %</p>
-              <p><span className="text-white font-medium">CV-Schwelle</span> – 6,5 % nach Plews et al. 2012/2013. Trainierte Athleten können niedrigere individuelle Werte aufweisen.</p>
+              <p><span className="text-white font-medium">Erholung</span> – HRV-Ratio 30 % · Schlaf 25 % · Last/TSB 20 % · RHR 15 % · Muskelkater 10 % (Notion = Quelle der Wahrheit).</p>
+              <p><span className="text-white font-medium">CV-Schwelle</span> – 12 % Warnzone / 15 % instabil (athleten-konstanten.md, individuell über 294 Tage kalibriert). Plews&nbsp;6,5&nbsp;% gilt für ln(RMSSD); auf roher HRV läuft dein CV ~2× höher.</p>
             </div>
           </div>
         </section>
