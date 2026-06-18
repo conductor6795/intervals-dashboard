@@ -7,20 +7,13 @@ Holt die Signale, die über intervals.icu NICHT zuverlässig ankommen:
   - All-Day-Stress (Ø / max)
   - Schlafphasen (deep / light / rem / awake) + Score
   - Training Readiness (Garmins eigener Score)
-  - Training Status (PRODUCTIVE / MAINTAINING / …)
+  - Training Status (MAINTAINING / PRODUCTIVE / …) als Textlabel
+  - ACWR (Acute:Chronic Workload Ratio) + Status — Garmins Verletzungs-Last-Lens
+  - VO2max (Rad + Laufen)
   - Resting HR (Cross-Check gegen intervals.icu)
 
 Schreibt nach DATA_DIR/garmin.json — dieselbe Datei-Konvention wie habits.json.
 Die /api/garmin-Route liest sie. Läuft per Host-Cron neben habits-sync.py.
-
-────────────────────────────────────────────────────────────────────────────
-WICHTIG — Feldnamen verifizieren:
-  Die Rückgabe-Strukturen von python-garminconnect variieren je nach Account,
-  Region und Gerät. Beim ERSTEN Lauf mit DEBUG=1 werden die Rohantworten als
-  garmin-raw-<datum>.json gespeichert. Dort die echten Feldpfade prüfen und die
-  mit  # VERIFY  markierten Extraktoren unten ggf. anpassen. Lieber einmal live
-  nachschauen als gegen geratene Felder coden.
-────────────────────────────────────────────────────────────────────────────
 
 Umgebungsvariablen:
   GARMIN_EMAIL        — Garmin-Connect-Login
@@ -30,11 +23,6 @@ Umgebungsvariablen:
                         (Standard: /opt/intervals-dashboard/habits-data)
   GARMIN_DAYS         — Anzahl Tage rückwärts (Standard: 7)
   DEBUG               — "1" → Rohantworten als garmin-raw-<datum>.json speichern
-
-Einmaliger Login (interaktiv, einmal MFA-Code eingeben falls aktiv):
-  python3 garmin-sync.py
-  → schreibt Tokens nach GARMIN_TOKENSTORE; danach läuft Cron unbeaufsichtigt,
-    bis das Refresh-Token (~1 Jahr) abläuft.
 """
 
 import os, sys, json
@@ -55,24 +43,17 @@ OUT_FILE   = os.path.join(DATA_DIR, "garmin.json")
 
 # ── Login ─────────────────────────────────────────────────────────────────────
 def connect() -> Garmin:
-    """
-    Lädt gespeicherte Tokens; nur beim ersten Lauf (oder nach Ablauf) echter
-    Login mit Passwort + ggf. MFA. prompt_mfa feuert nur bei aktivem 2FA.
-    """
+    """Lädt gespeicherte Tokens; nur beim ersten Lauf echter Login + ggf. MFA."""
     client = Garmin(EMAIL, PASSWORD, prompt_mfa=lambda: input("MFA-Code: "))
     try:
         client.login(TOKENSTORE)          # lädt Tokens aus dem Store
     except Exception:
-        # Kein/abgelaufener Token → frischer Login, dann Tokens sichern
-        client.login()
+        client.login()                    # frischer Login, dann Tokens sichern
         client.garth.dump(TOKENSTORE)
     return client
 
 
 # ── Defensive Extraktoren ───────────────────────────────────────────────────
-# Jeder gibt bei fehlendem Feld None zurück, statt zu crashen.
-# Pfade mit # VERIFY beim ersten DEBUG-Lauf gegen garmin-raw prüfen.
-
 def _save_raw(tag: str, d: str, obj) -> None:
     if not DEBUG:
         return
@@ -82,12 +63,11 @@ def _save_raw(tag: str, d: str, obj) -> None:
 
 
 def extract_body_battery(raw) -> dict:
-    # get_body_battery → Liste (ein Eintrag pro Tag)
+    # get_body_battery → Liste; Einträge sind [timestamp, wert] → Wert an Index 1.
     try:
         day = raw[0] if isinstance(raw, list) and raw else raw
-        arr = day.get("bodyBatteryValuesArray") or []      # VERIFY
-        # Einträge: [timestamp, status, value, ...]
-        vals = [row[2] for row in arr if len(row) > 2 and isinstance(row[2], (int, float))]
+        arr = day.get("bodyBatteryValuesArray") or []
+        vals = [row[1] for row in arr if len(row) > 1 and isinstance(row[1], (int, float))]
         return {
             "bbHigh":   max(vals) if vals else None,
             "bbLow":    min(vals) if vals else None,
@@ -100,8 +80,8 @@ def extract_body_battery(raw) -> dict:
 def extract_stress(raw) -> dict:
     try:
         return {
-            "stressAvg": raw.get("avgStressLevel"),         # VERIFY
-            "stressMax": raw.get("maxStressLevel"),         # VERIFY
+            "stressAvg": raw.get("avgStressLevel"),
+            "stressMax": raw.get("maxStressLevel"),
         }
     except Exception:
         return {"stressAvg": None, "stressMax": None}
@@ -109,13 +89,13 @@ def extract_stress(raw) -> dict:
 
 def extract_sleep(raw) -> dict:
     try:
-        dto = raw.get("dailySleepDTO", raw) or {}           # VERIFY
+        dto = raw.get("dailySleepDTO", raw) or {}
         score = None
         ss = dto.get("sleepScores") or {}
         if isinstance(ss, dict):
-            score = (ss.get("overall") or {}).get("value")  # VERIFY
+            score = (ss.get("overall") or {}).get("value")
         return {
-            "sleepSecs":  dto.get("sleepTimeSeconds"),      # VERIFY
+            "sleepSecs":  dto.get("sleepTimeSeconds"),
             "deepSecs":   dto.get("deepSleepSeconds"),
             "lightSecs":  dto.get("lightSleepSeconds"),
             "remSecs":    dto.get("remSleepSeconds"),
@@ -131,33 +111,53 @@ def extract_readiness(raw) -> dict:
     try:
         item = raw[0] if isinstance(raw, list) and raw else raw
         return {
-            "readinessScore": item.get("score"),            # VERIFY
-            "readinessLevel": item.get("level"),            # VERIFY
+            "readinessScore": item.get("score"),
+            "readinessLevel": item.get("level"),
         }
     except Exception:
         return {"readinessScore": None, "readinessLevel": None}
 
 
 def extract_status(raw) -> dict:
-    # get_training_status ist tief verschachtelt — best effort auf einen String.
+    # raw = get_training_status-Antwort.
+    # Pfad: mostRecentTrainingStatus → latestTrainingStatusData → {deviceId}
     try:
-        latest = (raw.get("mostRecentTrainingStatus") or {})         # VERIFY
-        feed   = (latest.get("latestTrainingStatusData") or {})
-        # erstes Geräte-Dict herausziehen
-        for dev in feed.values():
-            ts = dev.get("trainingStatus")
-            if ts:
-                return {"trainingStatus": ts}
-        return {"trainingStatus": None}
+        feed = ((raw.get("mostRecentTrainingStatus") or {})
+                   .get("latestTrainingStatusData") or {})
+        dev = None
+        for d in feed.values():
+            if d.get("primaryTrainingDevice"):
+                dev = d
+                break
+        if dev is None and feed:
+            dev = next(iter(feed.values()))
+        if not dev:
+            return {"trainingStatus": None, "acwr": None, "acwrStatus": None}
+        # "MAINTAINING_4" → "MAINTAINING"
+        phrase = dev.get("trainingStatusFeedbackPhrase") or ""
+        label  = phrase.rsplit("_", 1)[0] if phrase else None
+        acute  = dev.get("acuteTrainingLoadDTO") or {}
+        return {
+            "trainingStatus": label,
+            "acwr":           acute.get("dailyAcuteChronicWorkloadRatio"),
+            "acwrStatus":     acute.get("acwrStatus"),
+        }
     except Exception:
-        return {"trainingStatus": None}
+        return {"trainingStatus": None, "acwr": None, "acwrStatus": None}
 
 
-def extract_rhr(raw) -> dict:
+def extract_vo2max(raw) -> dict:
+    # Garmin: "generic" = Laufen, "cycling" = Radfahren (leistungsbasiert).
     try:
-        return {"restingHr": raw.get("restingHeartRate")}   # VERIFY (get_stats)
+        vo2 = raw.get("mostRecentVO2Max") or {}
+        cyc = vo2.get("cycling") or {}
+        gen = vo2.get("generic") or {}
+        return {
+            "vo2maxCycling": cyc.get("vo2MaxPreciseValue"),
+            "vo2maxRunning": gen.get("vo2MaxPreciseValue"),
+        }
     except Exception:
-        return {"restingHr": None}
+        return {"vo2maxCycling": None, "vo2maxRunning": None}
 
 
 # ── Ein-Tages-Pull ──────────────────────────────────────────────────────────
@@ -172,14 +172,29 @@ def pull_day(client: Garmin, d: str) -> dict:
         except Exception as e:
             print(f"    ⚠ {tag} ({d}): {e}")
 
-    grab("bodybattery", lambda: client.get_body_battery(d, d), extract_body_battery)
-    grab("stress",      lambda: client.get_stress_data(d),      extract_stress)
-    grab("sleep",       lambda: client.get_sleep_data(d),       extract_sleep)
+    grab("bodybattery", lambda: client.get_body_battery(d, d),  extract_body_battery)
+    grab("stress",      lambda: client.get_stress_data(d),       extract_stress)
+    grab("sleep",       lambda: client.get_sleep_data(d),        extract_sleep)
     grab("readiness",   lambda: client.get_training_readiness(d), extract_readiness)
-    grab("status",      lambda: client.get_training_status(d),  extract_status)
-    grab("stats",       lambda: client.get_stats(d),            extract_rhr)
+    grab("stats",       lambda: client.get_stats(d),             extract_rhr)
+
+    # Training Status + ACWR + VO2max stammen aus derselben Antwort → einmal abrufen
+    try:
+        raw = client.get_training_status(d)
+        _save_raw("status", d, raw)
+        out.update(extract_status(raw))
+        out.update(extract_vo2max(raw))
+    except Exception as e:
+        print(f"    ⚠ status ({d}): {e}")
 
     return out
+
+
+def extract_rhr(raw) -> dict:
+    try:
+        return {"restingHr": raw.get("restingHeartRate")}
+    except Exception:
+        return {"restingHr": None}
 
 
 # ── Hauptprogramm ─────────────────────────────────────────────────────────────
@@ -194,7 +209,6 @@ def main():
     client = connect()
     print("  ✅ Garmin verbunden")
 
-    # Bestehende Daten laden (inkrementell ergänzen, nichts verwerfen)
     store = {"lastSync": None, "days": {}}
     if os.path.exists(OUT_FILE):
         try:
@@ -219,7 +233,7 @@ def main():
 
     print(f"  ✅ {len(store['days'])} Tage gespeichert")
     if DEBUG:
-        print("  🐛 DEBUG: Rohantworten als garmin-raw-*.json — Feldpfade prüfen.")
+        print("  🐛 DEBUG: Rohantworten als garmin-raw-*.json")
 
 
 if __name__ == "__main__":
