@@ -14,6 +14,8 @@ import Tooltip from "@/components/ui/Tooltip";
 import TrainingReadiness from "@/components/metrics/TrainingReadiness";
 import RecoveryScore from "@/components/metrics/RecoveryScore";
 import CVAmpelCompact from "@/components/metrics/CVAmpelCompact";
+import DetailModal from "@/components/ui/DetailModal";
+import MetricDetail, { MetricKey, METRIC_TITLE } from "@/components/overview/MetricDetail";
 import PeriodSelector from "@/components/ui/PeriodSelector";
 
 import { useWellness } from "@/hooks/useWellness";
@@ -39,9 +41,10 @@ interface MetricCardProps {
   trend?: "up" | "neutral" | "down";
   positiveIsGood?: boolean;
   href?: string;
+  onClick?: () => void;
 }
 
-function MetricCard({ label, value, unit, color = "text-white", icon, sub, trend, positiveIsGood = true, href }: MetricCardProps) {
+function MetricCard({ label, value, unit, color = "text-white", icon, sub, trend, positiveIsGood = true, href, onClick }: MetricCardProps) {
   const inner = (
     <div className="bg-dash-card border border-dash-border rounded-2xl p-4 flex flex-col justify-between h-[100px] hover:border-white/20 transition-colors">
       <div className="flex items-center justify-between">
@@ -62,6 +65,7 @@ function MetricCard({ label, value, unit, color = "text-white", icon, sub, trend
     </div>
   );
 
+  if (onClick) return <button type="button" onClick={onClick} className="text-left w-full">{inner}</button>;
   if (href) return <Link href={href}>{inner}</Link>;
   return inner;
 }
@@ -113,6 +117,7 @@ export default function OverviewPage() {
   const garminToday = garmin[garmin.length - 1];
   const vetoed = calcVetoedReadiness(garminToday?.readinessScore ?? null, wellness);
   const readinessValue = vetoed ? vetoed.value : metrics.trainingReadiness;
+  const [detail, setDetail] = useState<MetricKey | null>(null);
 
   const today      = wellness[wellness.length - 1];
   const todayHRV   = today ? getHRV(today) : null;
@@ -234,7 +239,7 @@ export default function OverviewPage() {
                 sub={metrics.hrv7 ? `Ø7: ${metrics.hrv7.toFixed(1)}` : undefined}
                 trend={trends.hrv}
                 positiveIsGood={true}
-                href="/hrv"
+                onClick={() => setDetail("hrv")}
               />
               <MetricCard
                 label="Ruhepuls"
@@ -244,7 +249,7 @@ export default function OverviewPage() {
                 color="text-red-400"
                 trend={trends.rhr}
                 positiveIsGood={false}
-                href="/hrv"
+                onClick={() => setDetail("rhr")}
               />
               <MetricCard
                 label={<Tooltip term="CV">CV</Tooltip>}
@@ -252,7 +257,7 @@ export default function OverviewPage() {
                 unit="%"
                 color={metrics.cv != null && metrics.cv < HRV_CV.warn ? "text-emerald-400" : "text-yellow-400"}
                 sub={metrics.cv != null ? (metrics.cv < HRV_CV.warn ? "Stabil" : "Variabel") : undefined}
-                href="/hrv"
+                onClick={() => setDetail("cv")}
               />
               <MetricCard
                 label={<Tooltip term="CTL">CTL (Fitness)</Tooltip>}
@@ -261,7 +266,7 @@ export default function OverviewPage() {
                 color="text-blue-400"
                 trend={trends.ctl}
                 positiveIsGood={true}
-                href="/fitness"
+                onClick={() => setDetail("ctl")}
               />
               <MetricCard
                 label={<Tooltip term="ATL">ATL (Ermüdung)</Tooltip>}
@@ -269,7 +274,7 @@ export default function OverviewPage() {
                 color="text-orange-400"
                 trend={trends.atl}
                 positiveIsGood={false}
-                href="/fitness"
+                onClick={() => setDetail("atl")}
               />
               <MetricCard
                 label={<Tooltip term="TSB">TSB (Form)</Tooltip>}
@@ -278,7 +283,7 @@ export default function OverviewPage() {
                 sub={latestTSB != null ? (latestTSB >= 5 ? "Frisch" : latestTSB >= 0 ? "Neutral" : "Ermüdet") : undefined}
                 trend={trends.tsb}
                 positiveIsGood={true}
-                href="/fitness"
+                onClick={() => setDetail("tsb")}
               />
             </div>
           )}
@@ -302,7 +307,7 @@ export default function OverviewPage() {
                   color="text-blue-400"
                   trend={trends.sleep}
                   positiveIsGood={true}
-                  href="/wellness"
+                  onClick={() => setDetail("sleepScore")}
                 />
               )}
               {today.sleepSecs != null && (
@@ -314,7 +319,7 @@ export default function OverviewPage() {
                   color="text-blue-400"
                   trend={trends.sleep}
                   positiveIsGood={true}
-                  href="/wellness"
+                  onClick={() => setDetail("sleepDur")}
                 />
               )}
               {today.mood != null && (
@@ -323,7 +328,7 @@ export default function OverviewPage() {
                   value={today.mood}
                   unit="/5"
                   color={today.mood >= 4 ? "text-emerald-400" : today.mood >= 3 ? "text-yellow-400" : "text-red-400"}
-                  href="/wellness"
+                  onClick={() => setDetail("mood")}
                 />
               )}
               {today.fatigue != null && (
@@ -332,7 +337,7 @@ export default function OverviewPage() {
                   value={today.fatigue}
                   unit="/5"
                   color={today.fatigue <= 2 ? "text-emerald-400" : today.fatigue <= 3 ? "text-yellow-400" : "text-red-400"}
-                  href="/wellness"
+                  onClick={() => setDetail("fatigue")}
                 />
               )}
             </div>
@@ -364,6 +369,15 @@ export default function OverviewPage() {
             ))}
           </div>
         </section>
+
+        <DetailModal
+          open={detail != null}
+          onClose={() => setDetail(null)}
+          title={detail ? METRIC_TITLE[detail] : ""}
+          subtitle="intervals.icu + Garmin"
+        >
+          {detail && <MetricDetail wellness={wellness} garmin={garmin} metric={detail} />}
+        </DetailModal>
       </div>
     </>
   );
