@@ -4,10 +4,44 @@
       "Bash(npx tsc *)",
       "Bash(npx next *)",
       "Bash(mkdir -p \"c:\\\\Users\\\\jonas\\\\.claude\\\\projects\\\\c--Users-jonas-intervals-dashboard\\\\memory\" 2>/dev/null; echo done)",
-      "Bash(node -e \"const pkg = require\\('./node_modules/date-fns/package.json'\\); console.log\\(pkg.version\\)\")"
+      "Bash(node -e \"const pkg = require\\('./node_modules/date-fns/package.json'\\); console.log\\(pkg.version\\)\")",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(npm run *)",
+      "Bash(echo \"PID=$!\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3456/calendar)",
+      "Bash(cat /tmp/nextjs-dev.log | tail -20)",
+      "Read(//tmp/**)",
+      "Bash(node -e \"require\\('playwright'\\)\")",
+      "Bash(npm install *)",
+      "Bash(npx playwright *)",
+      "Bash(npm list *)",
+      "Read(//usr/local/lib/node_modules/playwright/**)",
+      "Read(//home/codespace/**)",
+      "Bash(node /tmp/test-calendar.mjs)",
+      "Bash(curl -s -u \"API_KEY:536fx2bti3gd6a3b7bkcbcr8l\" \"https://intervals.icu/api/v1/athlete/i12345/wellness?oldest=2026-06-01&newest=2026-06-25\")",
+      "Bash(curl -s -u \"API_KEY:536fx2bti3gd6a3b7bkcbcr8l\" \"https://intervals.icu/api/v1/athlete/i307717/activities?oldest=2026-06-01&newest=2026-06-25\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(npm run dev -- --port 3456 &>/tmp/nextjs-dev2.log & *)",
+      "Bash(fuser -k 3456/tcp)",
+      "Bash(fuser -k 3789/tcp)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3789/calendar)",
+      "Bash(grep -n 'p-6 space-y-6 max-w-\\\\|p-6 max-w-\\\\|p-6 space-y-8\\\\|p-6 space-y-6$' /workspaces/intervals-dashboard/src/app/page.tsx /workspaces/intervals-dashboard/src/app/fitness/page.tsx /workspaces/intervals-dashboard/src/app/hrv/page.tsx /workspaces/intervals-dashboard/src/app/training/page.tsx /workspaces/intervals-dashboard/src/app/wellness/page.tsx /workspaces/intervals-dashboard/src/app/compare/page.tsx /workspaces/intervals-dashboard/src/app/performance/page.tsx)",
+      "Bash(sed -i 's/className=\"p-6 space-y-6 max-w-\\\\[1400px\\\\]\"/className=\"p-3 sm:p-6 space-y-6 w-full\"/' /workspaces/intervals-dashboard/src/app/page.tsx /workspaces/intervals-dashboard/src/app/fitness/page.tsx /workspaces/intervals-dashboard/src/app/hrv/page.tsx)",
+      "Bash(sed -i 's/className=\"p-6 space-y-8 max-w-\\\\[1400px\\\\]\"/className=\"p-3 sm:p-6 space-y-8 w-full\"/' /workspaces/intervals-dashboard/src/app/training/page.tsx)",
+      "Bash(sed -i 's/className=\"p-6 max-w-\\\\[1400px\\\\] space-y-8\"/className=\"p-3 sm:p-6 space-y-8 w-full\"/' /workspaces/intervals-dashboard/src/app/wellness/page.tsx)",
+      "Bash(sed -i 's/className=\"p-6 space-y-6 max-w-\\\\[1200px\\\\]\"/className=\"p-3 sm:p-6 space-y-6 w-full\"/' /workspaces/intervals-dashboard/src/app/compare/page.tsx)",
+      "Bash(sed -i 's/className=\"p-6 max-w-\\\\[900px\\\\] space-y-6\"/className=\"p-3 sm:p-6 space-y-6 w-full\"/' /workspaces/intervals-dashboard/src/app/performance/page.tsx)",
+      "Bash(sed -i 's/className=\"p-6 max-w-xl space-y-6\"/className=\"p-3 sm:p-6 max-w-xl mx-auto space-y-6\"/' /workspaces/intervals-dashboard/src/app/einstellungen/page.tsx)",
+      "Bash(sed -i 's/className=\"p-6 space-y-6 max-w-\\\\[900px\\\\]\"/className=\"p-3 sm:p-6 space-y-6 max-w-[900px] mx-auto\"/' /workspaces/intervals-dashboard/src/app/settings/page.tsx)",
+      "Bash(sed -i 's/className=\"p-6 max-w-2xl space-y-4\"/className=\"p-3 sm:p-6 max-w-2xl mx-auto space-y-4\"/' /workspaces/intervals-dashboard/src/app/habits/page.tsx)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3456/)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3456/fitness)",
+      "Bash(echo \"started PID=$!\")"
     ],
     "additionalDirectories": [
-      "c:\\Users\\jonas\\.claude\\projects\\c--Users-jonas-intervals-dashboard"
+      "c:\\Users\\jonas\\.claude\\projects\\c--Users-jonas-intervals-dashboard",
+      "/tmp"
     ]
   }
 }

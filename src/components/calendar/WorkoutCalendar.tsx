@@ -1,19 +1,21 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   startOfMonth, endOfMonth, eachDayOfInterval,
   startOfWeek, endOfWeek, format, isSameMonth,
   isSameDay, parseISO, isWithinInterval,
 } from "date-fns";
 import { de } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, CalendarCheck } from "lucide-react";
+import { ChevronLeft, ChevronRight, CalendarCheck, Search, X as XIcon, CalendarDays } from "lucide-react";
 import { clsx } from "clsx";
-import { Activity, IntervalsEvent, ProRace } from "@/lib/types";
+import { Activity, IntervalsEvent, ProRace, WellnessDay } from "@/lib/types";
 import { PRO_RACES_2026, RACE_CATEGORY_COLORS } from "@/lib/pro-races";
+import DayDetailModal from "./DayDetailModal";
 
 interface Props {
   activities: Activity[];
   events: IntervalsEvent[];
+  wellness: WellnessDay[];
   showProRaces: boolean;
 }
 
@@ -24,16 +26,38 @@ const SPORT_COLORS: Record<string, string> = {
 };
 
 function sportColor(type: string) { return SPORT_COLORS[type] ?? SPORT_COLORS.Other; }
-function formatDuration(secs: number) {
-  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
-  return h > 0 ? `${h}h${m > 0 ? m + "m" : ""}` : `${m}m`;
-}
-function formatDistance(m: number) { return (m / 1000).toFixed(0) + " km"; }
 
-export default function WorkoutCalendar({ activities, events, showProRaces }: Props) {
+/** Versucht einen Datumsstring zu parsen (TT.MM, TT.MM.YYYY, YYYY-MM-DD) */
+function parseSearchDate(q: string): Date | null {
+  const dmY = q.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?$/);
+  if (dmY) {
+    const year = dmY[3] ? parseInt(dmY[3]) : new Date().getFullYear();
+    const d = new Date(year, parseInt(dmY[2]) - 1, parseInt(dmY[1]));
+    if (!isNaN(d.getTime())) return d;
+  }
+  const iso = q.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    const d = parseISO(q);
+    if (!isNaN(d.getTime())) return d;
+  }
+  return null;
+}
+
+/** Parst Dauersuche: ">60", "<90", "45" → Filterfunction in Minuten */
+function parseDurationFilter(q: string): ((mins: number) => boolean) | null {
+  const m = q.match(/^([<>]?)(\d+)\s*(?:min|m)?$/i);
+  if (!m) return null;
+  const op = m[1], val = parseInt(m[2]);
+  if (op === ">") return (x) => x > val;
+  if (op === "<") return (x) => x < val;
+  return (x) => Math.abs(x - val) <= 5;
+}
+
+export default function WorkoutCalendar({ activities, events, wellness, showProRaces }: Props) {
   const today = new Date();
   const [currentMonth, setCurrentMonth] = useState(today);
-  const [selected, setSelected] = useState<Date | null>(null);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [search, setSearch] = useState("");
 
   const days = useMemo(() => {
     const start = startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 1 });
@@ -61,6 +85,40 @@ export default function WorkoutCalendar({ activities, events, showProRaces }: Pr
     return map;
   }, [events]);
 
+  const wellnessByDate = useMemo(() => {
+    const map = new Map<string, WellnessDay>();
+    wellness.forEach((w) => map.set(w.id, w));
+    return map;
+  }, [wellness]);
+
+  /** Tage die dem Suchbegriff entsprechen – null = kein Filter aktiv */
+  const matchingDates = useMemo<Set<string> | null>(() => {
+    const q = search.trim();
+    if (!q) return null;
+
+    // Datumssuche
+    const dateHit = parseSearchDate(q);
+    if (dateHit) return new Set([format(dateHit, "yyyy-MM-dd")]);
+
+    // Dauersuche
+    const durFn = parseDurationFilter(q);
+    if (durFn) {
+      const hits = new Set<string>();
+      actsByDate.forEach((acts, key) => {
+        if (acts.some((a) => a.moving_time != null && durFn(Math.round(a.moving_time / 60)))) hits.add(key);
+      });
+      return hits;
+    }
+
+    // Titelsuche
+    const lower = q.toLowerCase();
+    const hits = new Set<string>();
+    actsByDate.forEach((acts, key) => {
+      if (acts.some((a) => a.name.toLowerCase().includes(lower))) hits.add(key);
+    });
+    return hits;
+  }, [search, actsByDate]);
+
   function proRacesOnDay(day: Date): ProRace[] {
     if (!showProRaces) return [];
     return PRO_RACES_2026.filter((r) => {
@@ -69,88 +127,161 @@ export default function WorkoutCalendar({ activities, events, showProRaces }: Pr
     });
   }
 
-  const selectedActs = selected ? actsByDate.get(format(selected, "yyyy-MM-dd")) ?? [] : [];
-  const selectedEvts = selected ? eventsByDate.get(format(selected, "yyyy-MM-dd")) ?? [] : [];
-  const selectedProRaces = selected ? proRacesOnDay(selected) : [];
+  const handleDateChange = useCallback((d: Date) => {
+    setSelectedDate(d);
+    if (!isSameMonth(d, currentMonth)) {
+      setCurrentMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+    }
+  }, [currentMonth]);
+
+  /** Kalender-Header: Datumspicker – springt direkt zu Monat + öffnet Modal */
+  function handleDatePickerChange(value: string) {
+    if (!value) return;
+    const d = parseISO(value);
+    if (isNaN(d.getTime())) return;
+    setCurrentMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+    setSelectedDate(d);
+  }
+
+  /** Suchfeld: bei Datum-Treffer direkt navigieren */
+  function handleSearchChange(value: string) {
+    setSearch(value);
+    const d = parseSearchDate(value.trim());
+    if (d) {
+      setCurrentMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+      setSelectedDate(d);
+    }
+  }
+
+  const modalDate = selectedDate ?? today;
+  const modalKey = format(modalDate, "yyyy-MM-dd");
+  const modalActs = actsByDate.get(modalKey) ?? [];
+  const modalWellness = wellnessByDate.get(modalKey) ?? null;
+
   const WEEKDAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
 
   return (
-    <div className="rounded-2xl border border-dash-border bg-dash-card overflow-hidden w-full">
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3 border-b border-dash-border">
-        <button
-          onClick={() => setCurrentMonth((m) => { const d = new Date(m); d.setMonth(d.getMonth() - 1); return d; })}
-          className="p-2 rounded-xl hover:bg-white/5 text-dash-muted hover:text-white transition-colors"
-        >
-          <ChevronLeft size={16} />
-        </button>
+    <>
+      <div className="rounded-2xl border border-dash-border bg-dash-card overflow-hidden w-full flex flex-col flex-1 min-h-0">
+        {/* ── Header ── */}
+        <div className="shrink-0 flex items-center justify-between px-5 py-3 border-b border-dash-border">
+          <button
+            onClick={() => setCurrentMonth((m) => { const d = new Date(m); d.setMonth(d.getMonth() - 1); return d; })}
+            className="p-2 rounded-xl hover:bg-white/5 text-dash-muted hover:text-white transition-colors"
+          >
+            <ChevronLeft size={16} />
+          </button>
 
-        <div className="flex items-center gap-3">
-          <h2 className="text-white font-semibold text-sm">
-            {format(currentMonth, "MMMM yyyy", { locale: de })}
-          </h2>
-          {/* Heute-Button */}
-          {!isSameMonth(currentMonth, today) && (
-            <button
-              onClick={() => { setCurrentMonth(today); setSelected(today); }}
-              className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-lg bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600/30 border border-indigo-500/30 transition-colors"
-            >
-              <CalendarCheck size={11} />
-              Heute
-            </button>
+          <div className="flex items-center gap-3">
+            {/* Klickbares Datum – öffnet nativen Datepicker */}
+            <div className="relative flex items-center gap-1.5 cursor-pointer group" title="Zu einem Datum springen">
+              <h2 className="text-white font-semibold text-sm group-hover:text-indigo-400 transition-colors select-none">
+                {format(currentMonth, "MMMM yyyy", { locale: de })}
+              </h2>
+              <CalendarDays size={12} className="text-dash-muted group-hover:text-indigo-400 transition-colors" />
+              <input
+                type="date"
+                value={format(currentMonth, "yyyy-MM-dd")}
+                onChange={(e) => handleDatePickerChange(e.target.value)}
+                className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                aria-label="Zu einem Datum springen"
+              />
+            </div>
+
+            {!isSameMonth(currentMonth, today) && (
+              <button
+                onClick={() => { setCurrentMonth(today); setSelectedDate(today); }}
+                className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-lg bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600/30 border border-indigo-500/30 transition-colors"
+              >
+                <CalendarCheck size={11} />
+                Heute
+              </button>
+            )}
+          </div>
+
+          <button
+            onClick={() => setCurrentMonth((m) => { const d = new Date(m); d.setMonth(d.getMonth() + 1); return d; })}
+            className="p-2 rounded-xl hover:bg-white/5 text-dash-muted hover:text-white transition-colors"
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+
+        {/* ── Suchleiste ── */}
+        <div className="shrink-0 px-4 py-2.5 border-b border-dash-border">
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-dash-muted pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              placeholder="Suche: Titel · Datum (25.06 oder 25.06.2026) · Dauer (>60, <30)"
+              className="w-full pl-8 pr-8 py-1.5 text-xs bg-dash-bg border border-dash-border rounded-lg text-white placeholder:text-dash-muted focus:outline-none focus:border-indigo-500/50 transition-colors"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dash-muted hover:text-white transition-colors"
+              >
+                <XIcon size={12} />
+              </button>
+            )}
+          </div>
+          {matchingDates != null && (
+            <p className="text-[10px] text-dash-muted mt-1.5 pl-0.5">
+              {matchingDates.size === 0 ? "Keine Treffer" : `${matchingDates.size} Tag${matchingDates.size !== 1 ? "e" : ""} gefunden`}
+            </p>
           )}
         </div>
 
-        <button
-          onClick={() => setCurrentMonth((m) => { const d = new Date(m); d.setMonth(d.getMonth() + 1); return d; })}
-          className="p-2 rounded-xl hover:bg-white/5 text-dash-muted hover:text-white transition-colors"
-        >
-          <ChevronRight size={16} />
-        </button>
-      </div>
-
-      <div className="flex flex-col lg:flex-row">
-        {/* Calendar grid */}
-        <div className="flex-1 min-w-0">
-          {/* Weekday headers */}
-          <div className="grid grid-cols-7 border-b border-dash-border">
+        {/* ── Kalender-Grid ── flex-1 fills all remaining height */}
+        <div className="flex-1 min-h-0 flex flex-col">
+          <div className="shrink-0 grid grid-cols-7 border-b border-dash-border">
             {WEEKDAYS.map((d) => (
-              <div key={d} className="py-2 text-center text-[10px] text-dash-muted uppercase tracking-wider">
-                {d}
-              </div>
+              <div key={d} className="py-2 text-center text-[10px] text-dash-muted uppercase tracking-wider">{d}</div>
             ))}
           </div>
 
-          {/* Day cells */}
-          <div className="grid grid-cols-7">
+          {/* gridAutoRows: 1fr splits the available height equally across all rows */}
+          <div className="grid grid-cols-7 flex-1 min-h-0" style={{ gridAutoRows: "1fr" }}>
             {days.map((day) => {
               const key = format(day, "yyyy-MM-dd");
               const acts = actsByDate.get(key) ?? [];
               const evts = eventsByDate.get(key) ?? [];
               const proRaces = proRacesOnDay(day);
               const isCurrentMonth = isSameMonth(day, currentMonth);
-              const isSelected = selected ? isSameDay(day, selected) : false;
-              const isToday = isSameDay(day, new Date());
+              const isSelected = selectedDate ? isSameDay(day, selectedDate) : false;
+              const isToday = isSameDay(day, today);
+              const hasWellness = wellnessByDate.has(key);
+
+              // Suchergebnis: nicht-treffende Tage abdunkeln
+              const isFiltered = matchingDates != null && !matchingDates.has(key);
+              const isMatch = matchingDates != null && matchingDates.has(key);
 
               return (
                 <div
                   key={key}
-                  onClick={() => setSelected(isSelected ? null : day)}
+                  onClick={() => {
+                    if (isSelected) { setSelectedDate(null); } else { setSelectedDate(day); }
+                  }}
                   className={clsx(
-                    "min-h-[80px] sm:min-h-[96px] p-1.5 border-b border-r border-dash-border cursor-pointer transition-colors",
+                    "min-h-[60px] p-1.5 border-b border-r border-dash-border cursor-pointer transition-all overflow-hidden",
                     !isCurrentMonth && "opacity-25",
+                    isFiltered && "opacity-20",
+                    isMatch && "ring-1 ring-inset ring-indigo-500/40",
                     isSelected ? "bg-indigo-600/15" : isToday ? "bg-indigo-600/5" : "hover:bg-white/3"
                   )}
                 >
                   <div className="flex items-center justify-between mb-1">
-                    <span
-                      className={clsx(
-                        "text-xs w-6 h-6 flex items-center justify-center rounded-full leading-none",
-                        isToday ? "bg-indigo-600 text-white font-bold" : isSelected ? "text-white font-medium" : "text-dash-muted"
-                      )}
-                    >
+                    <span className={clsx(
+                      "text-xs w-6 h-6 flex items-center justify-center rounded-full leading-none",
+                      isToday ? "bg-indigo-600 text-white font-bold" : isSelected ? "text-white font-medium" : "text-dash-muted"
+                    )}>
                       {format(day, "d")}
                     </span>
+                    {hasWellness && isCurrentMonth && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/50 shrink-0" title="Wellness-Daten vorhanden" />
+                    )}
                   </div>
 
                   <div className="space-y-0.5">
@@ -162,7 +293,6 @@ export default function WorkoutCalendar({ activities, events, showProRaces }: Pr
                       >
                         <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: sportColor(a.type) }} />
                         <span className="truncate hidden sm:block">{a.name}</span>
-                        <span className="sm:hidden w-1.5 h-1.5 rounded-full" style={{ backgroundColor: sportColor(a.type) }} />
                       </div>
                     ))}
                     {acts.length > 2 && (
@@ -191,66 +321,31 @@ export default function WorkoutCalendar({ activities, events, showProRaces }: Pr
           </div>
         </div>
 
-        {/* Detail panel – slides below on mobile, side on desktop */}
-        {selected && (
-          <div className="lg:w-72 border-t lg:border-t-0 lg:border-l border-dash-border p-4 flex flex-col gap-3">
-            <h3 className="text-sm font-semibold text-white">
-              {format(selected, "EEEE, d. MMMM", { locale: de })}
-            </h3>
-            {selectedActs.length === 0 && selectedEvts.length === 0 && selectedProRaces.length === 0 && (
-              <p className="text-xs text-dash-muted">Keine Einträge</p>
-            )}
-            {selectedActs.map((a) => (
-              <div key={a.id} className="rounded-xl p-3 border border-dash-border" style={{ borderLeftColor: sportColor(a.type), borderLeftWidth: 3 }}>
-                <p className="text-xs font-medium text-white truncate mb-1">{a.name}</p>
-                <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-dash-muted">
-                  <span style={{ color: sportColor(a.type) }}>{a.type}</span>
-                  {a.moving_time && <span>{formatDuration(a.moving_time)}</span>}
-                  {a.distance && a.distance > 0 && <span>{formatDistance(a.distance)}</span>}
-                  {a.average_heartrate && <span>{Math.round(a.average_heartrate)} bpm Ø</span>}
-                  {a.average_watts && <span>{Math.round(a.average_watts)} W Ø</span>}
-                  {a.icu_training_load && <span>TSS {Math.round(a.icu_training_load)}</span>}
-                  {a.race && <span className="text-red-400 font-semibold">RENNEN</span>}
-                </div>
-              </div>
-            ))}
-            {selectedEvts.map((e) => (
-              <div key={String(e.id)} className="rounded-xl p-3 border border-red-500/30 bg-red-500/10">
-                <p className="text-xs font-medium text-red-400">{e.name}</p>
-                {e.description && <p className="text-[10px] text-dash-muted mt-1">{e.description}</p>}
-                {(e as { load?: number }).load != null && (
-                  <p className="text-[10px] text-dash-muted mt-0.5">Geplant: {(e as { load?: number }).load} TSS</p>
-                )}
-              </div>
-            ))}
-            {selectedProRaces.map((r) => (
-              <div
-                key={r.name + r.startDate}
-                className="rounded-xl p-3 border"
-                style={{ borderColor: `${RACE_CATEGORY_COLORS[r.category]}40`, backgroundColor: `${RACE_CATEGORY_COLORS[r.category]}10` }}
-              >
-                <p className="text-xs font-medium" style={{ color: RACE_CATEGORY_COLORS[r.category] }}>{r.name}</p>
-                <p className="text-[10px] text-dash-muted mt-0.5">
-                  {r.category} · {r.country ?? ""}
-                  {r.startDate !== r.endDate && ` · bis ${format(parseISO(r.endDate), "d. MMM", { locale: de })}`}
-                </p>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* ── Legend ── */}
+        <div className="shrink-0 px-4 py-2 border-t border-dash-border flex flex-wrap gap-2.5 text-[9px]">
+          {Object.entries(SPORT_COLORS).filter(([k]) => k !== "Other").map(([k, v]) => (
+            <span key={k} className="flex items-center gap-1 text-dash-muted">
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: v }} />{k}
+            </span>
+          ))}
+          <span className="flex items-center gap-1 text-dash-muted">
+            <span className="w-2 h-2 rounded-full bg-red-500" /> Ereignis
+          </span>
+          <span className="flex items-center gap-1 text-dash-muted">
+            <span className="w-2 h-2 rounded-full bg-emerald-500/50" /> Wellness
+          </span>
+        </div>
       </div>
 
-      {/* Legend */}
-      <div className="px-4 py-2 border-t border-dash-border flex flex-wrap gap-2.5 text-[9px]">
-        {Object.entries(SPORT_COLORS).filter(([k]) => k !== "Other").map(([k, v]) => (
-          <span key={k} className="flex items-center gap-1 text-dash-muted">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: v }} />{k}
-          </span>
-        ))}
-        <span className="flex items-center gap-1 text-dash-muted">
-          <span className="w-2 h-2 rounded-full bg-red-500" /> Ereignis
-        </span>
-      </div>
-    </div>
+      {/* ── Day detail modal ── */}
+      <DayDetailModal
+        open={selectedDate != null}
+        onClose={() => setSelectedDate(null)}
+        date={modalDate}
+        activities={modalActs}
+        wellness={modalWellness}
+        onDateChange={handleDateChange}
+      />
+    </>
   );
 }

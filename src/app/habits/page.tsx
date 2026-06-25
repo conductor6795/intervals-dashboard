@@ -778,7 +778,7 @@ export default function HabitsPage() {
 
   return(
     <>
-      <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-6 py-3 flex items-center justify-between flex-wrap gap-2">
+      <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-3 sm:px-6 py-3 flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-sm font-semibold text-white flex items-center gap-2">
           <CheckSquare size={14} style={{color:"var(--a-600)"}}/>Habit Tracker
           {syncIndicator && <span className={clsx("text-[10px] font-normal", syncState==="offline"?"text-yellow-400":"text-dash-muted")}>{syncIndicator}</span>}
@@ -793,7 +793,7 @@ export default function HabitsPage() {
         </div>
       </header>
 
-      <div className="p-6 max-w-2xl space-y-4">
+      <div className="p-3 sm:p-6 max-w-2xl mx-auto space-y-4">
 
         {/* ══ HEUTE ══ */}
         {tab==="today"&&(<>

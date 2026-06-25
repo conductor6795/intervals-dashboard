@@ -237,7 +237,7 @@ export default function WellnessPage() {
 
   return (
     <>
-      <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-6 py-3 flex items-center justify-between flex-wrap gap-2">
+      <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-3 sm:px-6 py-3 flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-sm font-semibold text-white">Wellness</h1>
         <div className="flex items-center gap-2 flex-wrap">
           <PeriodSelector value={period} onChange={setPeriod} />
@@ -255,7 +255,7 @@ export default function WellnessPage() {
         <div className="mx-6 mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-400">{error}</div>
       )}
 
-      <div className="p-6 max-w-[1400px] space-y-8">
+      <div className="p-3 sm:p-6 space-y-8 w-full">
 
         {/* ── Trend-Charts ── */}
         <section>

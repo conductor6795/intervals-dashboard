@@ -211,12 +211,12 @@ export default function TrainingPage() {
 
   return (
     <>
-      <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-6 py-3 flex items-center justify-between gap-3 flex-wrap">
+      <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-3 sm:px-6 py-3 flex items-center justify-between gap-3 flex-wrap">
         <h1 className="text-sm font-semibold text-white">Training</h1>
         <PeriodSelector value={period} onChange={setPeriod} />
       </header>
 
-      <div className="p-6 space-y-8 max-w-[1400px]">
+      <div className="p-3 sm:p-6 space-y-8 w-full">
         {loading ? (
           <>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

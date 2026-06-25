@@ -21,7 +21,7 @@ function Skeleton({ className }: { className?: string }) {
 
 function PageHeader({ title, loading, onRefresh, children }: { title: string; loading: boolean; onRefresh: () => void; children?: React.ReactNode }) {
   return (
-    <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-6 py-3 flex items-center justify-between gap-3 flex-wrap">
+    <header className="sticky top-0 z-10 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-3 sm:px-6 py-3 flex items-center justify-between gap-3 flex-wrap">
       <h1 className="text-sm font-semibold text-white">{title}</h1>
       <div className="flex items-center gap-2 flex-wrap">
         {children}
@@ -74,7 +74,7 @@ export default function HRVPage() {
         </div>
       )}
 
-      <div className="p-6 space-y-6 max-w-[1400px]">
+      <div className="p-3 sm:p-6 space-y-6 w-full">
 
         {/* Readiness + Recovery */}
         <section>

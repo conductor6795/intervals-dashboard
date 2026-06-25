@@ -47,9 +47,9 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         />
       )}
 
-      <div className="lg:ml-52 min-h-screen flex flex-col">
+      <div className="lg:ml-52 h-screen flex flex-col overflow-hidden">
         {/* Mobile top bar */}
-        <div className="lg:hidden sticky top-0 z-20 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-4 py-3 flex items-center gap-3">
+        <div className="lg:hidden shrink-0 bg-dash-bg/95 backdrop-blur border-b border-dash-border px-4 py-3 flex items-center gap-3">
           <button
             onClick={() => setSidebarOpen(true)}
             className="text-dash-muted hover:text-white transition-colors p-1"
@@ -64,8 +64,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           </div>
         </div>
 
-        {/* Page content */}
-        <div className="flex-1">
+        {/* Page content – scrollable, fills remaining height */}
+        <div className="flex-1 overflow-y-auto min-h-0 flex flex-col">
           {children}
         </div>
       </div>
