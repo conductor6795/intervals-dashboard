@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
     `total_elevation_gain,average_heartrate,max_heartrate,icu_training_load,` +
     `icu_intensity,average_watts,max_watts,race,commute,` +
     `icu_average_watts,weighted_average_watts,icu_weighted_average_watts,` +
-    `avg_power,norm_power`;
+    `avg_power,norm_power,aerobic_decoupling`;
 
   try {
     const res = await fetch(url, {

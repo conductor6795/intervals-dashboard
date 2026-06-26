@@ -11,6 +11,7 @@ import { clsx } from "clsx";
 import { Activity, IntervalsEvent, ProRace, WellnessDay } from "@/lib/types";
 import { PRO_RACES_2026, RACE_CATEGORY_COLORS } from "@/lib/pro-races";
 import DayDetailModal from "./DayDetailModal";
+import ActivityListOverlay from "./ActivityListOverlay";
 
 interface Props {
   activities: Activity[];
@@ -58,6 +59,7 @@ export default function WorkoutCalendar({ activities, events, wellness, showProR
   const [currentMonth, setCurrentMonth] = useState(today);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [search, setSearch] = useState("");
+  const [listOpen, setListOpen] = useState(false);
 
   const days = useMemo(() => {
     const start = startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 1 });
@@ -214,24 +216,12 @@ export default function WorkoutCalendar({ activities, events, wellness, showProR
             <input
               type="text"
               value={search}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              placeholder="Suche: Titel · Datum (25.06 oder 25.06.2026) · Dauer (>60, <30)"
-              className="w-full pl-8 pr-8 py-1.5 text-xs bg-dash-bg border border-dash-border rounded-lg text-white placeholder:text-dash-muted focus:outline-none focus:border-indigo-500/50 transition-colors"
+              onFocus={() => setListOpen(true)}
+              readOnly
+              placeholder="Aktivitäten durchsuchen & filtern…"
+              className="w-full pl-8 pr-8 py-1.5 text-xs bg-dash-bg border border-dash-border rounded-lg text-white placeholder:text-dash-muted focus:outline-none focus:border-indigo-500/50 transition-colors cursor-pointer"
             />
-            {search && (
-              <button
-                onClick={() => setSearch("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dash-muted hover:text-white transition-colors"
-              >
-                <XIcon size={12} />
-              </button>
-            )}
           </div>
-          {matchingDates != null && (
-            <p className="text-[10px] text-dash-muted mt-1.5 pl-0.5">
-              {matchingDates.size === 0 ? "Keine Treffer" : `${matchingDates.size} Tag${matchingDates.size !== 1 ? "e" : ""} gefunden`}
-            </p>
-          )}
         </div>
 
         {/* ── Kalender-Grid ── flex-1 fills all remaining height */}
@@ -345,6 +335,13 @@ export default function WorkoutCalendar({ activities, events, wellness, showProR
         activities={modalActs}
         wellness={modalWellness}
         onDateChange={handleDateChange}
+      />
+
+      {/* ── Activity list overlay ── */}
+      <ActivityListOverlay
+        open={listOpen}
+        activities={activities}
+        onClose={() => setListOpen(false)}
       />
     </>
   );

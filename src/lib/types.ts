@@ -38,6 +38,12 @@ export interface Activity {
   icu_intensity?: number;
   average_watts?: number;
   max_watts?: number;
+  // Normalized Power – intervals.icu liefert verschiedene Feldnamen je nach Quelle
+  weighted_average_watts?: number;
+  icu_weighted_average_watts?: number;
+  norm_power?: number;
+  // Aerobic Decoupling (Pa:Hr)
+  aerobic_decoupling?: number;
   description?: string;
   race?: boolean;
   commute?: boolean;
