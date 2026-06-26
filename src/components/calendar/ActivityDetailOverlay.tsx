@@ -17,10 +17,6 @@ interface DetailData extends Activity {
   avg_lr_balance?: number;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-const ATHLETE_ID = process.env.NEXT_PUBLIC_INTERVALS_ATHLETE_ID ?? "";
-
 function fmtTime(secs?: number) {
   if (!secs) return "–";
   const h = Math.floor(secs / 3600);
@@ -154,7 +150,7 @@ export default function ActivityDetailOverlay({ activity, onClose }: Props) {
   const speed    = fmtSpeed(a.average_speed);
   const isLoading = loading && !detail;
 
-  const intervalsUrl = `https://intervals.icu/athlete/${ATHLETE_ID}/activities/${a.id}`;
+  const intervalsUrl = `https://intervals.icu/activities/${a.id}`;
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col" style={{ background: "var(--color-dash-bg, #0f1117)" }}>

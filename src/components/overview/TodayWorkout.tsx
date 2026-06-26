@@ -1,6 +1,13 @@
 "use client";
+import { useState } from "react";
 import { CheckCircle2, Dumbbell, ExternalLink, Calendar } from "lucide-react";
 import { IntervalsEvent, Activity } from "@/lib/types";
+import dynamic from "next/dynamic";
+
+const ActivityDetailOverlay = dynamic(
+  () => import("@/components/calendar/ActivityDetailOverlay"),
+  { ssr: false }
+);
 
 interface Props {
   events: IntervalsEvent[];
@@ -22,6 +29,7 @@ function todayStr() {
 }
 
 export default function TodayWorkout({ events, activities, athleteId = "" }: Props) {
+  const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
   const today = todayStr();
 
   const todayActivities = activities.filter(
@@ -66,49 +74,49 @@ export default function TodayWorkout({ events, activities, athleteId = "" }: Pro
 
   return (
     <div className="flex flex-col gap-2">
-      {todayActivities.map((activity) => {
-        const href = athleteId
-          ? `https://intervals.icu/activities/${activity.id}`
-          : null;
-        const inner = (
-          <div className="relative flex items-center gap-4 p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 hover:bg-white/5 transition-colors">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center text-lg shrink-0">
-              {sportIcon(activity.type)}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-0.5">
-                <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
-                <p className="text-[10px] text-emerald-400 uppercase tracking-wider font-semibold">
-                  Training absolviert
-                </p>
-              </div>
-              <p className="text-sm text-white font-medium truncate">{activity.name}</p>
-              <div className="flex gap-3 mt-0.5 text-[11px] text-dash-muted">
-                {activity.moving_time && (
-                  <span>{Math.floor(activity.moving_time / 60)} min</span>
-                )}
-                {activity.distance && (
-                  <span>{(activity.distance / 1000).toFixed(1)} km</span>
-                )}
-                {activity.average_heartrate && (
-                  <span>Ø {Math.round(activity.average_heartrate)} bpm</span>
-                )}
-              </div>
-            </div>
-            {href && (
-              <ExternalLink size={16} className="shrink-0 text-dash-muted" />
-            )}
+      {todayActivities.map((activity) => (
+        <div
+          key={activity.id}
+          onClick={() => setSelectedActivity(activity)}
+          className="relative flex items-center gap-4 p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 hover:bg-white/5 transition-colors cursor-pointer"
+        >
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center text-lg shrink-0">
+            {sportIcon(activity.type)}
           </div>
-        );
-
-        return href ? (
-          <a key={activity.id} href={href} target="_blank" rel="noopener noreferrer">
-            {inner}
-          </a>
-        ) : (
-          <div key={activity.id}>{inner}</div>
-        );
-      })}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-0.5">
+              <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+              <p className="text-[10px] text-emerald-400 uppercase tracking-wider font-semibold">
+                Training absolviert
+              </p>
+            </div>
+            <p className="text-sm text-white font-medium truncate">{activity.name}</p>
+            <div className="flex gap-3 mt-0.5 text-[11px] text-dash-muted">
+              {activity.moving_time && (
+                <span>{Math.floor(activity.moving_time / 60)} min</span>
+              )}
+              {activity.distance && (
+                <span>{(activity.distance / 1000).toFixed(1)} km</span>
+              )}
+              {activity.average_heartrate && (
+                <span>Ø {Math.round(activity.average_heartrate)} bpm</span>
+              )}
+            </div>
+          </div>
+          {athleteId && (
+            <a
+              href={`https://intervals.icu/activities/${activity.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="shrink-0 text-dash-muted hover:text-indigo-400 transition-colors"
+              title="Auf intervals.icu öffnen"
+            >
+              <ExternalLink size={16} />
+            </a>
+          )}
+        </div>
+      ))}
 
       {remainingEvents.map((event) => {
         const href = athleteId
@@ -147,6 +155,11 @@ export default function TodayWorkout({ events, activities, athleteId = "" }: Pro
           <div key={event.id}>{inner}</div>
         );
       })}
+
+      <ActivityDetailOverlay
+        activity={selectedActivity}
+        onClose={() => setSelectedActivity(null)}
+      />
     </div>
   );
 }

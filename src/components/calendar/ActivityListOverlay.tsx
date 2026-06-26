@@ -34,39 +34,35 @@ function sportEmoji(a: Activity): string {
 
 // ── Intensity ─────────────────────────────────────────────────────────────────
 
-type IntensityKey = "z1" | "z2" | "tempo" | "sst" | "threshold" | "vo2max" | "race";
-const INTENSITY_LABELS: Record<IntensityKey, string> = {
-  z1: "Z1", z2: "Z2", tempo: "Tempo", sst: "SST",
-  threshold: "Schwelle", vo2max: "VO2max", race: "Race",
-};
-
-// icu_intensity is 0–100 (IF × 100) from Intervals.icu
-function classifyIntensity(a: Activity): IntensityKey | null {
-  if (a.race) return "race";
+// isZ2 used for decoupling display — icu_intensity is 0–100 (IF × 100)
+function isZ2Activity(a: Activity): boolean {
   const i = a.icu_intensity;
-  if (i == null) return null;
-  if (i < 55)  return "z1";
-  if (i < 75)  return "z2";
-  if (i < 85)  return "tempo";
-  if (i < 95)  return "sst";
-  if (i <= 105) return "threshold";
-  return "vo2max";
+  return i != null && !a.race && i >= 55 && i < 75;
 }
 
 // ── Duration ──────────────────────────────────────────────────────────────────
 
-type DurationBucket = "lt30" | "30to60" | "60to120" | "gt120";
+type DurationBucket = "lt60" | "h1to2" | "h2to3" | "h3to4" | "h4to5" | "h5to6" | "gt6h";
 const DURATION_LABELS: Record<DurationBucket, string> = {
-  lt30: "< 30 min", "30to60": "30–60 min", "60to120": "1–2 h", gt120: "> 2 h",
+  lt60:  "< 1 h",
+  h1to2: "1–2 h",
+  h2to3: "2–3 h",
+  h3to4: "3–4 h",
+  h4to5: "4–5 h",
+  h5to6: "5–6 h",
+  gt6h:  "> 6 h",
 };
 
 function durationBucket(secs?: number): DurationBucket | null {
   if (secs == null) return null;
-  const m = secs / 60;
-  if (m < 30)  return "lt30";
-  if (m < 60)  return "30to60";
-  if (m < 120) return "60to120";
-  return "gt120";
+  const h = secs / 3600;
+  if (h < 1) return "lt60";
+  if (h < 2) return "h1to2";
+  if (h < 3) return "h2to3";
+  if (h < 4) return "h3to4";
+  if (h < 5) return "h4to5";
+  if (h < 6) return "h5to6";
+  return "gt6h";
 }
 
 function fmtDuration(secs?: number) {
@@ -169,10 +165,6 @@ function usePagedActivities(seedActivities: Activity[]) {
           );
         });
         windowEndRef.current = next;
-        if (data.length < 3) {
-          hasMoreRef.current = false;
-          setHasMore(false);
-        }
       }
     } catch {
       /* silently ignore — user can scroll again */
@@ -197,9 +189,9 @@ interface Props {
 
 export default function ActivityListOverlay({ open, activities: seed, onClose }: Props) {
   const [query, setQuery]                     = useState("");
-  const [sportFilter, setSportFilter]         = useState<string | null>(null);
-  const [intensityFilter, setIntensityFilter] = useState<IntensityKey | null>(null);
-  const [durationFilter, setDurationFilter]   = useState<DurationBucket | null>(null);
+  const [sportFilter, setSportFilter]       = useState<string | null>(null);
+  const [commuteFilter, setCommuteFilter]   = useState(false);
+  const [durationFilter, setDurationFilter] = useState<DurationBucket | null>(null);
   const [dateFrom, setDateFrom]               = useState("");
   const [dateTo, setDateTo]                   = useState("");
   const [selected, setSelected]               = useState<Activity | null>(null);
@@ -210,13 +202,14 @@ export default function ActivityListOverlay({ open, activities: seed, onClose }:
 
   const { activities, loading, hasMore, loadMore } = usePagedActivities(seed);
 
-  // Auto-focus search on open
+  // Auto-focus search on open + kick off first load immediately
   useEffect(() => {
     if (open) {
       setQuery("");
       setTimeout(() => inputRef.current?.focus(), 60);
+      loadMore(); // load the first older batch right away, don't wait for scroll
     }
-  }, [open]);
+  }, [open, loadMore]);
 
   // Escape closes
   useEffect(() => {
@@ -258,11 +251,11 @@ export default function ActivityListOverlay({ open, activities: seed, onClose }:
       const q = query.trim().toLowerCase();
       list = list.filter((a) => a.name.toLowerCase().includes(q));
     }
-    if (sportFilter)     list = list.filter((a) => a.type === sportFilter);
-    if (intensityFilter) list = list.filter((a) => classifyIntensity(a) === intensityFilter);
-    if (durationFilter)  list = list.filter((a) => durationBucket(a.moving_time) === durationFilter);
+    if (sportFilter)    list = list.filter((a) => a.type === sportFilter && (sportFilter !== "Ride" || !a.commute));
+    if (commuteFilter)  list = list.filter((a) => !!a.commute);
+    if (durationFilter) list = list.filter((a) => durationBucket(a.moving_time) === durationFilter);
     return list;
-  }, [activities, query, sportFilter, intensityFilter, durationFilter, dateFrom, dateTo]);
+  }, [activities, query, sportFilter, commuteFilter, durationFilter, dateFrom, dateTo]);
 
   if (!open) return null;
 
@@ -313,20 +306,13 @@ export default function ActivityListOverlay({ open, activities: seed, onClose }:
           {/* Sport */}
           <div className="flex items-center gap-2 overflow-x-auto scrollbar-none">
             <span className="shrink-0 text-[10px] text-dash-muted uppercase tracking-wider w-16">Sportart</span>
-            <Chip label="Alle" active={sportFilter === null} onClick={() => setSportFilter(null)} />
+            <Chip label="Alle" active={sportFilter === null && !commuteFilter}
+              onClick={() => { setSportFilter(null); setCommuteFilter(false); }} />
+            <Chip label="🚲 Pendeln" active={commuteFilter}
+              onClick={() => { setCommuteFilter((v) => !v); setSportFilter(null); }} />
             {sportTypes.map((t) => (
-              <Chip key={t} label={t} active={sportFilter === t}
-                onClick={() => setSportFilter(t === sportFilter ? null : t)} />
-            ))}
-          </div>
-
-          {/* Intensity */}
-          <div className="flex items-center gap-2 overflow-x-auto scrollbar-none">
-            <span className="shrink-0 text-[10px] text-dash-muted uppercase tracking-wider w-16">Intensität</span>
-            <Chip label="Alle" active={intensityFilter === null} onClick={() => setIntensityFilter(null)} />
-            {(Object.keys(INTENSITY_LABELS) as IntensityKey[]).map((k) => (
-              <Chip key={k} label={INTENSITY_LABELS[k]} active={intensityFilter === k}
-                onClick={() => setIntensityFilter(k === intensityFilter ? null : k)} />
+              <Chip key={t} label={t} active={sportFilter === t && !commuteFilter}
+                onClick={() => { setSportFilter(t === sportFilter ? null : t); setCommuteFilter(false); }} />
             ))}
           </div>
 
@@ -358,8 +344,7 @@ export default function ActivityListOverlay({ open, activities: seed, onClose }:
             </div>
           ) : (
             filtered.map((a) => {
-              const intensity = classifyIntensity(a);
-              const isZ2 = intensity === "z2";
+              const isZ2 = isZ2Activity(a);
               const np   = npValue(a);
               const dec  = a.decoupling;
 

@@ -12,6 +12,7 @@ import { Activity, IntervalsEvent, ProRace, WellnessDay } from "@/lib/types";
 import { PRO_RACES_2026, RACE_CATEGORY_COLORS } from "@/lib/pro-races";
 import DayDetailModal from "./DayDetailModal";
 import ActivityListOverlay from "./ActivityListOverlay";
+import ActivityDetailOverlay from "./ActivityDetailOverlay";
 
 interface Props {
   activities: Activity[];
@@ -60,6 +61,7 @@ export default function WorkoutCalendar({ activities, events, wellness, showProR
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [search, setSearch] = useState("");
   const [listOpen, setListOpen] = useState(false);
+  const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
 
   const days = useMemo(() => {
     const start = startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 1 });
@@ -236,8 +238,18 @@ export default function WorkoutCalendar({ activities, events, wellness, showProR
           <div className="grid grid-cols-7 flex-1 min-h-0" style={{ gridAutoRows: "1fr" }}>
             {days.map((day) => {
               const key = format(day, "yyyy-MM-dd");
-              const acts = actsByDate.get(key) ?? [];
-              const evts = eventsByDate.get(key) ?? [];
+              const acts  = actsByDate.get(key)   ?? [];
+              const allEvts = eventsByDate.get(key) ?? [];
+              // Hide planned events that are already covered by a completed activity of the same type
+              const actTypeCount: Record<string, number> = {};
+              acts.forEach((a) => { const t = a.type.toLowerCase(); actTypeCount[t] = (actTypeCount[t] ?? 0) + 1; });
+              const usedTypeCount: Record<string, number> = {};
+              const evts = allEvts.filter((e) => {
+                const t = (e.type ?? "").toLowerCase();
+                const covered = usedTypeCount[t] ?? 0;
+                if (covered < (actTypeCount[t] ?? 0)) { usedTypeCount[t] = covered + 1; return false; }
+                return true;
+              });
               const proRaces = proRacesOnDay(day);
               const isCurrentMonth = isSameMonth(day, currentMonth);
               const isSelected = selectedDate ? isSameDay(day, selectedDate) : false;
@@ -255,7 +267,7 @@ export default function WorkoutCalendar({ activities, events, wellness, showProR
                     if (isSelected) { setSelectedDate(null); } else { setSelectedDate(day); }
                   }}
                   className={clsx(
-                    "min-h-[60px] p-1.5 border-b border-r border-dash-border cursor-pointer transition-all overflow-hidden",
+                    "min-h-[72px] p-1.5 border-b border-r border-dash-border cursor-pointer transition-all overflow-hidden",
                     !isCurrentMonth && "opacity-25",
                     isFiltered && "opacity-20",
                     isMatch && "ring-1 ring-inset ring-indigo-500/40",
@@ -278,29 +290,30 @@ export default function WorkoutCalendar({ activities, events, wellness, showProR
                     {acts.slice(0, 2).map((a) => (
                       <div
                         key={a.id}
-                        className="flex items-center gap-1 px-1 py-0.5 rounded text-[9px] leading-tight"
+                        onClick={(e) => { e.stopPropagation(); setSelectedActivity(a); }}
+                        className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] leading-tight hover:brightness-125 transition-all"
                         style={{ backgroundColor: `${sportColor(a.type)}22`, color: sportColor(a.type) }}
                       >
-                        <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: sportColor(a.type) }} />
-                        <span className="truncate hidden sm:block">{a.name}</span>
+                        <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: sportColor(a.type) }} />
+                        <span className="truncate hidden sm:block font-medium">{a.name}</span>
                       </div>
                     ))}
                     {acts.length > 2 && (
-                      <div className="text-[9px] text-dash-muted pl-1">+{acts.length - 2}</div>
+                      <div className="text-[10px] text-dash-muted pl-1">+{acts.length - 2}</div>
                     )}
                     {evts.slice(0, 1).map((e) => (
-                      <div key={String(e.id)} className="flex items-center gap-1 px-1 py-0.5 rounded text-[9px] leading-tight bg-red-500/15 text-red-400">
-                        <div className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+                      <div key={String(e.id)} className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] leading-tight bg-red-500/15 text-red-400">
+                        <div className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
                         <span className="truncate hidden sm:block">{e.name}</span>
                       </div>
                     ))}
                     {proRaces.slice(0, 1).map((r) => (
                       <div
                         key={r.name + r.startDate}
-                        className="flex items-center gap-1 px-1 py-0.5 rounded text-[9px] leading-tight"
+                        className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] leading-tight"
                         style={{ backgroundColor: `${RACE_CATEGORY_COLORS[r.category]}20`, color: RACE_CATEGORY_COLORS[r.category] }}
                       >
-                        <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: RACE_CATEGORY_COLORS[r.category] }} />
+                        <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: RACE_CATEGORY_COLORS[r.category] }} />
                         <span className="truncate hidden sm:block">{r.name}</span>
                       </div>
                     ))}
@@ -335,6 +348,7 @@ export default function WorkoutCalendar({ activities, events, wellness, showProR
         activities={modalActs}
         wellness={modalWellness}
         onDateChange={handleDateChange}
+        onSelectActivity={(a) => setSelectedActivity(a)}
       />
 
       {/* ── Activity list overlay ── */}
@@ -342,6 +356,12 @@ export default function WorkoutCalendar({ activities, events, wellness, showProR
         open={listOpen}
         activities={activities}
         onClose={() => setListOpen(false)}
+      />
+
+      {/* ── Activity detail (from calendar chip or day modal) ── */}
+      <ActivityDetailOverlay
+        activity={selectedActivity}
+        onClose={() => setSelectedActivity(null)}
       />
     </>
   );

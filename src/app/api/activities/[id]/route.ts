@@ -25,7 +25,8 @@ export async function GET(
     "icu_efficiency_factor,icu_variability_index,icu_power_hr,polarization_index,decoupling," +
     "icu_zone_times,icu_hr_zone_times,icu_ftp," +
     "race,commute,sub_type,description,icu_rpe," +
-    "average_stride_length,avg_ground_contact_time,avg_vertical_oscillation,avg_vertical_ratio,avg_lr_balance";
+    "average_stride_length,avg_ground_contact_time,avg_vertical_oscillation,avg_vertical_ratio,avg_lr_balance," +
+    "start_latlng,map";
 
   try {
     const res = await fetch(`${BASE}/${athleteId}/activities/${id}?fields=${fields}`, {

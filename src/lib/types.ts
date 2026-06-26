@@ -74,6 +74,9 @@ export interface Activity {
   race?: boolean;
   commute?: boolean;
   sub_type?: string;
+  // GPS / map
+  start_latlng?: [number, number];
+  map?: { summary_polyline?: string; polyline?: string };
 }
 
 export interface IntervalsEvent {

@@ -342,6 +342,8 @@ export default function HabitsPage() {
   const [form,              setForm]              = useState<(Partial<Habit>&{error?:string})|null>(null);
   const [delId,             setDelId]             = useState<string|null>(null);
   const [syncMsg,           setSyncMsg]           = useState("");
+  const [syncAllMsg,        setSyncAllMsg]        = useState("");
+  const [syncAllRunning,    setSyncAllRunning]    = useState(false);
   const [loaded,            setLoaded]            = useState(false);
   const [syncState,         setSyncState]         = useState<"idle"|"saving"|"saved"|"offline">("idle");
 
@@ -821,7 +823,28 @@ export default function HabitsPage() {
               className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors">
               <RefreshCw size={12}/> {isToday?"Heute":"Diesen Tag"} → intervals.icu
             </button>
+            <button
+              disabled={syncAllRunning}
+              onClick={async()=>{
+                const dates=Object.keys(history).sort();
+                if(dates.length===0){setSyncAllMsg("Keine Daten zum Synchronisieren.");return;}
+                setSyncAllRunning(true);
+                let ok=0,fail=0;
+                for(let i=0;i<dates.length;i++){
+                  setSyncAllMsg(`${i+1}/${dates.length} synchronisiert…`);
+                  const r=await doSync(dates[i]);
+                  if(r.ok) ok++; else fail++;
+                  // kurze Pause damit die API nicht überlastet wird
+                  await new Promise(res=>setTimeout(res,300));
+                }
+                setSyncAllMsg(`✓ ${ok} Tage synchronisiert${fail>0?` · ${fail} Fehler`:""}`);
+                setSyncAllRunning(false);
+              }}
+              className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border border-dash-border text-dash-muted hover:text-white hover:border-indigo-500/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              <RefreshCw size={12} className={syncAllRunning?"animate-spin":""}/> Alle Tage → intervals.icu
+            </button>
             {syncMsg&&<span className="text-[11px] text-dash-muted">{syncMsg}</span>}
+            {syncAllMsg&&<span className="text-[11px] text-dash-muted">{syncAllMsg}</span>}
           </div>
 
           <div className="flex items-center gap-2 p-3 rounded-2xl border border-dash-border bg-dash-card flex-wrap">

@@ -2,7 +2,7 @@
 import { useEffect } from "react";
 import { format, addDays, subDays, parseISO } from "date-fns";
 import { de } from "date-fns/locale";
-import { X, ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, CalendarDays, ExternalLink } from "lucide-react";
 import { Activity, WellnessDay } from "@/lib/types";
 
 const SPORT_COLORS: Record<string, string> = {
@@ -55,9 +55,10 @@ interface Props {
   activities: Activity[];
   wellness: WellnessDay | null;
   onDateChange: (d: Date) => void;
+  onSelectActivity: (a: Activity) => void;
 }
 
-export default function DayDetailModal({ open, onClose, date, activities, wellness, onDateChange }: Props) {
+export default function DayDetailModal({ open, onClose, date, activities, wellness, onDateChange, onSelectActivity }: Props) {
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
@@ -184,14 +185,10 @@ export default function DayDetailModal({ open, onClose, date, activities, wellne
               </p>
               <div className="space-y-2">
                 {activities.map((a) => (
-                  <a
+                  <div
                     key={a.id}
-                    href={`https://intervals.icu/activities/${a.id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="Auf intervals.icu ansehen"
-                    onClick={(e) => e.stopPropagation()}
-                    className="block rounded-xl p-3 border border-dash-border bg-dash-bg hover:border-indigo-500/40 hover:bg-indigo-500/5 transition-colors group"
+                    onClick={(e) => { e.stopPropagation(); onSelectActivity(a); }}
+                    className="rounded-xl p-3 border border-dash-border bg-dash-bg hover:border-indigo-500/40 hover:bg-indigo-500/5 transition-colors group cursor-pointer"
                     style={{ borderLeftColor: sportColor(a.type), borderLeftWidth: 3 }}
                   >
                     {/* Title row */}
@@ -207,6 +204,16 @@ export default function DayDetailModal({ open, onClose, date, activities, wellne
                         >
                           {a.type}
                         </span>
+                        <a
+                          href={`https://intervals.icu/activities/${a.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="p-0.5 rounded text-dash-muted hover:text-indigo-400 transition-colors"
+                          title="Auf intervals.icu öffnen"
+                        >
+                          <ExternalLink size={11} />
+                        </a>
                       </div>
                     </div>
                     {/* Metrics grid */}
@@ -236,7 +243,7 @@ export default function DayDetailModal({ open, onClose, date, activities, wellne
                         <span className="text-dash-muted">TSS: <span className="text-white font-medium">{Math.round(a.icu_training_load)}</span></span>
                       )}
                       {a.icu_intensity && (
-                        <span className="text-dash-muted">IF: <span className="text-white">{a.icu_intensity.toFixed(2)}</span></span>
+                        <span className="text-dash-muted">IF: <span className="text-white">{(a.icu_intensity / 100).toFixed(2)}</span></span>
                       )}
                     </div>
                     {a.description && (
@@ -244,7 +251,7 @@ export default function DayDetailModal({ open, onClose, date, activities, wellne
                         {a.description}
                       </p>
                     )}
-                  </a>
+                  </div>
                 ))}
               </div>
             </section>
