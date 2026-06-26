@@ -683,8 +683,12 @@ export default function HabitsPage() {
     const waterL=waterHabit?d.numeric[waterHabit.id]:undefined;
 
     const payload:Record<string,unknown>={ id:date };
-    if(tags.length>0) payload.tags=tags;
-    if(nums)          payload.comments=`Habit Tracker – ${nums}`;          // Feld heißt "comments" (Plural)
+    // intervals.icu unterstützt kein "tags"-Feld → gecheckte Habits in comments einbauen
+    const commentParts=[
+      tags.length>0?tags.join(", "):null,
+      nums||null,
+    ].filter(Boolean).join(" | ");
+    if(commentParts) payload.comments=`Habit Tracker – ${commentParts}`;
     if(d.mood!==null) payload.mood=moodTo4(d.mood);                        // 5-Stufen → intervals 1–4
 
     // Subjektive Befinden-Felder (1–4, 1 = bestes)
