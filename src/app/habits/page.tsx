@@ -910,16 +910,37 @@ export default function HabitsPage() {
             const isLUnit=["l","liter"].includes(hb.unit.toLowerCase());
             const isSDUnit=hb.unit.toLowerCase()==="sd";
             const effectiveTarget=dynamicTargets[hb.id]??hb.numTarget,isDynamic=!!dynamicTargets[hb.id];
+            const isCheckbox=hb.habitType==="checkbox";
             return(
               <div key={hb.id}
-                className={clsx("flex items-start gap-3 p-3.5 rounded-2xl border bg-dash-card transition-colors",hb.habitType==="checkbox"&&"cursor-pointer select-none items-center")}
-                style={{borderColor:done?hb.color+"60":undefined}}
-                onClick={hb.habitType==="checkbox"?()=>toggle(hb.id):undefined}
-                role={hb.habitType==="checkbox"?"checkbox":undefined} aria-checked={hb.habitType==="checkbox"?done:undefined}
-                tabIndex={hb.habitType==="checkbox"?0:undefined}
-                onKeyDown={hb.habitType==="checkbox"?e=>{if(e.key==="Enter"||e.key===" ")toggle(hb.id);}:undefined}>
-                <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-base transition-all mt-0.5" style={{border:`2px solid ${hb.color}`,background:done?hb.color:"transparent",color:done?"#fff":hb.color}}>{done?"✓":hb.emoji}</div>
-                <div className="flex-1 min-w-0"><p className="text-sm font-medium text-white">{hb.name}</p><p className="text-[11px] text-dash-muted">{badge(hb)}</p></div>
+                className={clsx(
+                  "flex items-start gap-3 p-3.5 rounded-2xl border transition-all",
+                  isCheckbox&&"cursor-pointer select-none items-center",
+                  done
+                    ? "shadow-sm"
+                    : isCheckbox ? "opacity-55 hover:opacity-80" : ""
+                )}
+                style={{
+                  borderColor: done ? hb.color+"90" : "#1e2d4a",
+                  backgroundColor: done ? hb.color+"18" : "#0d1520",
+                }}
+                onClick={isCheckbox?()=>toggle(hb.id):undefined}
+                role={isCheckbox?"checkbox":undefined} aria-checked={isCheckbox?done:undefined}
+                tabIndex={isCheckbox?0:undefined}
+                onKeyDown={isCheckbox?e=>{if(e.key==="Enter"||e.key===" ")toggle(hb.id);}:undefined}>
+                <div className={clsx("w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-lg transition-all",!isCheckbox&&"mt-0.5")}
+                  style={{
+                    border:`2px solid ${hb.color}`,
+                    background: done ? hb.color : "transparent",
+                    color: done ? "#fff" : hb.color,
+                    boxShadow: done ? `0 0 10px ${hb.color}50` : "none",
+                  }}>
+                  {done ? "✓" : hb.emoji}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className={clsx("text-sm font-medium transition-colors", done?"text-white":"text-white/70")}>{hb.name}</p>
+                  <p className="text-[11px] text-dash-muted">{badge(hb)}</p>
+                </div>
                 {hb.habitType==="numeric"&&!isSDUnit&&(
                   <div className="flex flex-col items-end gap-1.5 flex-shrink-0" onClick={e=>e.stopPropagation()}>
                     <div className="flex items-center gap-1.5">

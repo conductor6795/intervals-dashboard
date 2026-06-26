@@ -34,7 +34,16 @@
       "goalValue": 5
     }
   ],
-  "history": {},
+  "history": {
+    "2026-06-26": {
+      "checked": [
+        "h2"
+      ],
+      "numeric": {},
+      "mood": null,
+      "drinks": {}
+    }
+  },
   "settings": {
     "ivAthleteId": "",
     "ivApiKey": "",
