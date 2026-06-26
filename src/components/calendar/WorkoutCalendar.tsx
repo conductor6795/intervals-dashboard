@@ -29,6 +29,19 @@ const SPORT_COLORS: Record<string, string> = {
 
 function sportColor(type: string) { return SPORT_COLORS[type] ?? SPORT_COLORS.Other; }
 
+function sportEmoji(type: string, race?: boolean, commute?: boolean): string {
+  if (type === "Ride")        return race ? "🏆" : commute ? "🚲" : "🚴";
+  if (type === "VirtualRide") return "🖥️";
+  if (type === "Run")         return race ? "🏆" : "👟";
+  if (type === "VirtualRun")  return "🏃";
+  if (type === "Swim")        return "🏊";
+  if (type === "Strength")    return "🏋️";
+  if (type === "Walk")        return "🚶";
+  if (type === "Hike")        return "🥾";
+  if (type === "Workout")     return "⚡";
+  return "🏅";
+}
+
 /** Versucht einen Datumsstring zu parsen (TT.MM, TT.MM.YYYY, YYYY-MM-DD) */
 function parseSearchDate(q: string): Date | null {
   const dmY = q.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?$/);
@@ -294,7 +307,7 @@ export default function WorkoutCalendar({ activities, events, wellness, showProR
                         className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] leading-tight hover:brightness-125 transition-all"
                         style={{ backgroundColor: `${sportColor(a.type)}22`, color: sportColor(a.type) }}
                       >
-                        <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: sportColor(a.type) }} />
+                        <span className="text-[11px] leading-none shrink-0">{sportEmoji(a.type, a.race, a.commute)}</span>
                         <span className="truncate hidden sm:block font-medium">{a.name}</span>
                       </div>
                     ))}
@@ -303,7 +316,7 @@ export default function WorkoutCalendar({ activities, events, wellness, showProR
                     )}
                     {evts.slice(0, 1).map((e) => (
                       <div key={String(e.id)} className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] leading-tight bg-red-500/15 text-red-400">
-                        <div className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+                        <span className="text-[11px] leading-none shrink-0 opacity-80">{e.type ? sportEmoji(e.type) : "📅"}</span>
                         <span className="truncate hidden sm:block">{e.name}</span>
                       </div>
                     ))}

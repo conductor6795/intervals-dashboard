@@ -1,1 +1,59 @@
-{"habits":[{"id":"h1","name":"4L Wasser","emoji":"💧","color":"#3b82f6","habitType":"numeric","unit":"L","numTarget":4,"goalType":"daily","goalValue":1},{"id":"h2","name":"Alkohol","emoji":"🍺","color":"#ef4444","habitType":"checkbox","unit":"","numTarget":0,"goalType":"max_per_days","goalValue":14},{"id":"h3","name":"Sport 30 min","emoji":"🏃","color":"#10b981","habitType":"checkbox","unit":"","numTarget":0,"goalType":"min_per_week","goalValue":5}],"history":{},"settings":{"ivAthleteId":"","ivApiKey":"","notifEnabled":false,"notifTime":"22:00","autoSync":false,"lastSync":null,"latitude":null,"longitude":null,"locationName":""}}
+{
+  "habits": [
+    {
+      "id": "h1",
+      "name": "4L Wasser",
+      "emoji": "💧",
+      "color": "#3b82f6",
+      "habitType": "numeric",
+      "unit": "L",
+      "numTarget": 4,
+      "goalType": "daily",
+      "goalValue": 1
+    },
+    {
+      "id": "h2",
+      "name": "Alkohol",
+      "emoji": "🍺",
+      "color": "#ef4444",
+      "habitType": "checkbox",
+      "unit": "",
+      "numTarget": 0,
+      "goalType": "max_per_days",
+      "goalValue": 14
+    },
+    {
+      "id": "h3",
+      "name": "Sport 30 min",
+      "emoji": "🏃",
+      "color": "#10b981",
+      "habitType": "checkbox",
+      "unit": "",
+      "numTarget": 0,
+      "goalType": "min_per_week",
+      "goalValue": 5
+    }
+  ],
+  "history": {},
+  "settings": {
+    "ivAthleteId": "",
+    "ivApiKey": "",
+    "notifEnabled": false,
+    "notifTime": "22:00",
+    "autoSync": false,
+    "lastSync": null,
+    "latitude": null,
+    "longitude": null,
+    "locationName": ""
+  },
+  "hydrationSettings": {
+    "bodyWeightKg": 75,
+    "useWeightBased": true,
+    "baseWaterL": 2.6,
+    "sweatTests": {
+      "outdoor24": null,
+      "outdoor28": null,
+      "rolle": null
+    }
+  }
+}
