@@ -37,11 +37,13 @@
       "Bash(sed -i 's/className=\"p-6 max-w-2xl space-y-4\"/className=\"p-3 sm:p-6 max-w-2xl mx-auto space-y-4\"/' /workspaces/intervals-dashboard/src/app/habits/page.tsx)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3456/)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3456/fitness)",
-      "Bash(echo \"started PID=$!\")"
+      "Bash(echo \"started PID=$!\")",
+      "Bash(mkdir -p /workspaces/intervals-dashboard/src/app/api/activities/\\\\[id\\\\]/streams)"
     ],
     "additionalDirectories": [
       "c:\\Users\\jonas\\.claude\\projects\\c--Users-jonas-intervals-dashboard",
-      "/tmp"
+      "/tmp",
+      "/workspaces/intervals-dashboard/src/app/api/activities/[id]"
     ]
   }
 }

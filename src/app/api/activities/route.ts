@@ -21,11 +21,14 @@ export async function GET(req: NextRequest) {
   // Sync-Quelle (Garmin/Strava/Wahoo) unterschiedliche Feldnamen für Watt
   const url =
     `${BASE}/${athleteId}/activities?oldest=${oldest}&newest=${newest}` +
-    `&fields=id,start_date_local,type,name,moving_time,elapsed_time,distance,` +
-    `total_elevation_gain,average_heartrate,max_heartrate,icu_training_load,` +
-    `icu_intensity,average_watts,max_watts,race,commute,` +
-    `icu_average_watts,weighted_average_watts,icu_weighted_average_watts,` +
-    `avg_power,norm_power,aerobic_decoupling`;
+    `&fields=id,start_date_local,type,name,moving_time,elapsed_time,coasting_time,` +
+    `distance,total_elevation_gain,average_heartrate,max_heartrate,` +
+    `average_speed,max_speed,average_cadence,average_temp,calories,carbs_used,` +
+    `icu_training_load,power_load,hr_load,strain_score,` +
+    `icu_intensity,average_watts,icu_average_watts,max_watts,icu_weighted_avg_watts,` +
+    `icu_efficiency_factor,icu_variability_index,icu_power_hr,polarization_index,decoupling,` +
+    `icu_zone_times,icu_hr_zone_times,icu_ftp,` +
+    `race,commute,sub_type,description`;
 
   try {
     const res = await fetch(url, {

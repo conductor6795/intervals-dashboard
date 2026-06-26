@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   BarChart2, Calendar, FlaskConical, Heart, Scale, Settings,
-  TrendingUp, Zap, X, Activity, GitCompare, Dumbbell, CheckSquare,
+  TrendingUp, Zap, X, GitCompare, Dumbbell, CheckSquare,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useState, useEffect } from "react";
@@ -21,8 +21,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/fitness",     label: "Fitness-Trend",  icon: TrendingUp },
       { href: "/training",    label: "Training",       icon: Dumbbell, id: "training" },
-      { href: "/performance", label: "Leistungsdaten", icon: Activity },
-      { href: "/calendar",    label: "Kalender",       icon: Calendar },
+{ href: "/calendar",    label: "Kalender",       icon: Calendar },
     ],
   },
   {

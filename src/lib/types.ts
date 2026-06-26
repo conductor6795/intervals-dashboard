@@ -23,6 +23,11 @@ export interface WellnessDay {
   injury?: number;
 }
 
+export interface ZoneTime {
+  id: string;   // "Z1", "Z2", … "SS"
+  secs: number;
+}
+
 export interface Activity {
   id: string;
   start_date_local: string;
@@ -30,23 +35,45 @@ export interface Activity {
   name: string;
   moving_time?: number;
   elapsed_time?: number;
+  coasting_time?: number;
   distance?: number;
   total_elevation_gain?: number;
   average_heartrate?: number;
   max_heartrate?: number;
+  average_speed?: number;      // m/s
+  max_speed?: number;          // m/s
+  average_cadence?: number;
+  average_temp?: number;
+  calories?: number;
+  carbs_used?: number;
+  // Training load
   icu_training_load?: number;
+  power_load?: number;
+  hr_load?: number;
+  strain_score?: number;
+  // Intensity – Intervals gives 0–100 (= IF * 100)
   icu_intensity?: number;
+  // Power
   average_watts?: number;
+  icu_average_watts?: number;
   max_watts?: number;
-  // Normalized Power – intervals.icu liefert verschiedene Feldnamen je nach Quelle
-  weighted_average_watts?: number;
-  icu_weighted_average_watts?: number;
-  norm_power?: number;
-  // Aerobic Decoupling (Pa:Hr)
-  aerobic_decoupling?: number;
+  icu_weighted_avg_watts?: number;   // NP from Intervals (primary)
+  // Ratios
+  icu_efficiency_factor?: number;    // NP / avgHR
+  icu_variability_index?: number;    // NP / AP
+  icu_power_hr?: number;             // AP / avgHR
+  polarization_index?: number;
+  decoupling?: number;               // aerobic decoupling %
+  // Zone distributions
+  icu_zone_times?: ZoneTime[];
+  icu_hr_zone_times?: number[];      // seconds in each HR zone [Z1…Z5]
+  // FTP at time
+  icu_ftp?: number;
+  // Flags
   description?: string;
   race?: boolean;
   commute?: boolean;
+  sub_type?: string;
 }
 
 export interface IntervalsEvent {
