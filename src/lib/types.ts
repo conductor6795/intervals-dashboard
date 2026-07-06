@@ -154,6 +154,8 @@ export interface CalculatedMetrics {
   cvZone: CVZone;
   cvZoneLabel: string;
   cvZoneAdvice: string;
+  hrvFloorFlag: boolean;      // Absolut-Trend-Floor: hrv7 > 12 % unter 60-Tage-Mittel (Drift-Banner)
+  hardTriggers: string[];     // aktive Sofort-Deload-Trigger (Spec §4), leer = keiner
 }
 
 export interface DayMetrics {

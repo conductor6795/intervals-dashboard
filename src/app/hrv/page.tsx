@@ -110,6 +110,8 @@ export default function HRVPage() {
                 cv={metrics.cv}
                 tsb={metrics.tsb}
                 hrv7={metrics.hrv7}
+                hrvFloorFlag={metrics.hrvFloorFlag}
+                hardTriggers={metrics.hardTriggers}
               />
               {/* Zusatz-Wellness */}
               <div className="p-5 rounded-2xl border border-dash-border bg-dash-card">

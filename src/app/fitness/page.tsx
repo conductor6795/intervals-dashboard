@@ -12,8 +12,11 @@ import { de } from "date-fns/locale";
 
 import { useWellness } from "@/hooks/useWellness";
 import { useActivities, useEvents } from "@/hooks/useActivities";
+import { useGarmin } from "@/hooks/useGarmin";
 import { buildProgression, findProjectedPeak } from "@/lib/progression";
 import { WellnessDay, Activity } from "@/lib/types";
+import { calcBiologicalAge } from "@/lib/biologicalAge";
+import { ATHLETE } from "@/lib/athlete";
 import { usePeriod } from "@/hooks/usePeriod";
 import PeriodSelector from "@/components/ui/PeriodSelector";
 import GlossaryTooltip from "@/components/ui/Tooltip";
@@ -170,8 +173,25 @@ export default function FitnessPage() {
   const { data: wellness, loading: wLoading, error, refetch } = useWellness(days);
   const { activities, loading: aLoading } = useActivities(days);
   const { events } = useEvents();
+  const { data: garmin } = useGarmin();
 
   const loading = wLoading || aLoading;
+
+  // ── Biologisches Alter (Fitness-Alter) ──
+  const bioAge = useMemo(() => {
+    const gToday = garmin[garmin.length - 1];
+    const deviceVo2 = gToday?.vo2maxCycling ?? gToday?.vo2maxRunning ?? null;
+    let vo2: number | null = deviceVo2;
+    let source = "Garmin-Messung";
+    if (vo2 == null) {
+      // Schätzung aus FTP/kg nach Coggan: VO2max ≈ (FTP/kg × 10,8) + 7
+      const weight = (ATHLETE.weightCorridor[0] + ATHLETE.weightCorridor[1]) / 2;
+      vo2 = parseFloat(((ATHLETE.ftp / weight) * 10.8 + 7).toFixed(1));
+      source = "Schätzung aus FTP/kg";
+    }
+    const chronoAge = ATHLETE.birthYear ? new Date().getFullYear() - ATHLETE.birthYear : null;
+    return calcBiologicalAge(wellness, vo2, source, chronoAge, ATHLETE.sex);
+  }, [garmin, wellness]);
 
   const today     = wellness[wellness.length - 1];
   const latestCTL = today?.ctl;
@@ -305,6 +325,64 @@ export default function FitnessPage() {
             </div>
           )}
         </section>
+
+        {/* ── Biologisches Alter (Fitness-Alter) ────────────────────────── */}
+        {!loading && bioAge.hasData && bioAge.fitnessAge != null && (
+          <section>
+            <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-4">Biologisches Alter</p>
+            <div className="bg-dash-card border border-dash-border rounded-2xl p-5">
+              <div className="flex items-center gap-6 flex-wrap">
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-dash-muted uppercase tracking-wider">Fitness-Alter</span>
+                  <div className="flex items-end gap-2">
+                    <span className={clsx(
+                      "text-5xl font-bold tabular-nums leading-none",
+                      bioAge.deltaYears == null ? "text-cyan-400"
+                        : bioAge.deltaYears <= 0 ? "text-emerald-400" : "text-orange-400"
+                    )}>{bioAge.fitnessAge}</span>
+                    <span className="text-dash-muted text-sm pb-1">Jahre</span>
+                  </div>
+                  {bioAge.deltaYears != null && bioAge.chronologicalAge != null && (
+                    <span className="text-xs text-dash-muted mt-1">
+                      chronologisch {bioAge.chronologicalAge} ·{" "}
+                      <span className={bioAge.deltaYears <= 0 ? "text-emerald-400" : "text-orange-400"}>
+                        {bioAge.deltaYears <= 0 ? "" : "+"}{bioAge.deltaYears} Jahre
+                      </span>
+                    </span>
+                  )}
+                  <span className="text-xs text-dash-muted mt-1">{bioAge.rating}</span>
+                </div>
+
+                <div className="flex-1 min-w-[220px] grid grid-cols-3 gap-3">
+                  <div className="bg-dash-bg rounded-xl p-3 text-center">
+                    <p className="text-[9px] text-dash-muted uppercase tracking-wider">VO₂max</p>
+                    <p className="text-lg font-bold tabular-nums text-cyan-400">{bioAge.vo2max?.toFixed(1)}</p>
+                    <p className="text-[9px] text-dash-muted">{bioAge.vo2maxSource}</p>
+                  </div>
+                  <div className="bg-dash-bg rounded-xl p-3 text-center">
+                    <p className="text-[9px] text-dash-muted uppercase tracking-wider">Ruhepuls-Effekt</p>
+                    <p className={clsx("text-lg font-bold tabular-nums", bioAge.rhrAdjust <= 0 ? "text-emerald-400" : "text-orange-400")}>
+                      {bioAge.rhrAdjust > 0 ? "+" : ""}{bioAge.rhrAdjust.toFixed(1)}
+                    </p>
+                    <p className="text-[9px] text-dash-muted">Jahre</p>
+                  </div>
+                  <div className="bg-dash-bg rounded-xl p-3 text-center">
+                    <p className="text-[9px] text-dash-muted uppercase tracking-wider">HRV-Effekt</p>
+                    <p className={clsx("text-lg font-bold tabular-nums", bioAge.hrvAdjust <= 0 ? "text-emerald-400" : "text-orange-400")}>
+                      {bioAge.hrvAdjust > 0 ? "+" : ""}{bioAge.hrvAdjust.toFixed(1)}
+                    </p>
+                    <p className="text-[9px] text-dash-muted">Jahre</p>
+                  </div>
+                </div>
+              </div>
+              {bioAge.chronologicalAge == null && (
+                <p className="text-[10px] text-dash-muted/70 mt-3">
+                  Für den Vergleich mit dem chronologischen Alter <span className="font-mono">birthYear</span> in <span className="font-mono">src/lib/athlete.ts</span> setzen.
+                </p>
+              )}
+            </div>
+          </section>
+        )}
 
         {/* ── PMC Chart ─────────────────────────────────────────────────── */}
         <section>

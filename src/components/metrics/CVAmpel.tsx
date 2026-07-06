@@ -11,6 +11,8 @@ interface Props {
   cv: number | null;
   tsb: number | null;
   hrv7: number | null;
+  hrvFloorFlag?: boolean;
+  hardTriggers?: string[];
 }
 
 const LADDER: { zone: CVZone; title: string; verdict: string; dot: string; activeBg: string; color: string }[] = [
@@ -54,7 +56,7 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-export default function CVAmpel({ zone, label, advice, hrvPct, cv, tsb, hrv7 }: Props) {
+export default function CVAmpel({ zone, label, advice, hrvPct, cv, tsb, hrv7, hrvFloorFlag = false, hardTriggers = [] }: Props) {
   const active = LADDER.find((z) => z.zone === zone);
 
   return (
@@ -94,6 +96,28 @@ export default function CVAmpel({ zone, label, advice, hrvPct, cv, tsb, hrv7 }: 
         <p className={clsx("font-semibold mb-0.5", active?.color)}>{label}</p>
         <p className="text-dash-muted">{advice}</p>
       </div>
+
+      {/* Aktive Hard-Trigger (Sofort-Deload) */}
+      {hardTriggers.length > 0 && (
+        <div className="mt-2 p-2.5 rounded-lg bg-red-500/10 border border-red-500/20">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-red-400 mb-1">Hard-Trigger aktiv</p>
+          <ul className="space-y-0.5">
+            {hardTriggers.map((t) => (
+              <li key={t} className="text-[11px] text-red-300/90 tabular-nums">• {t}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Absolut-Trend-Floor (Drift-Banner, kein Sofort-Deload) */}
+      {hrvFloorFlag && (
+        <div className="mt-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+          <p className="text-[11px] text-amber-300/90 leading-snug">
+            <span className="font-semibold">Absolut-Drift:</span> hrv7 &gt; 12 % unter 60-Tage-Mittel.
+            Kein Sofort-Deload — 2 Wochenchecks in Folge mit Flag → Deload-Prüfung.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

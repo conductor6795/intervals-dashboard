@@ -17,12 +17,20 @@ import CVAmpelCompact from "@/components/metrics/CVAmpelCompact";
 import DetailModal from "@/components/ui/DetailModal";
 import MetricDetail, { MetricKey, METRIC_TITLE } from "@/components/overview/MetricDetail";
 import PeriodSelector from "@/components/ui/PeriodSelector";
+import DailyRings from "@/components/overview/DailyRings";
+import HealthMonitor from "@/components/overview/HealthMonitor";
+import SleepCoach from "@/components/overview/SleepCoach";
+import ActivitySummaryCard from "@/components/overview/ActivitySummaryCard";
 
 import { useWellness } from "@/hooks/useWellness";
 import { useActivities, useEvents } from "@/hooks/useActivities";
 import { useGarmin } from "@/hooks/useGarmin";
 import { usePeriod } from "@/hooks/usePeriod";
 import { calcAllMetrics, getHRV, calcValueTrend, calcVetoedReadiness } from "@/lib/calculations";
+import { calcDailySummary } from "@/lib/dailySummary";
+import { calcHealthMonitor } from "@/lib/healthMonitor";
+import { calcSleepCoachPlan } from "@/lib/sleepCoach";
+import { getSleepSettings, DEFAULT_SLEEP_SETTINGS, SleepCoachSettings } from "@/lib/sleepSettings";
 import { HRV_CV } from "@/lib/athlete";
 import { WellnessDay } from "@/lib/types";
 import { getPageSettings } from "@/lib/settings";
@@ -119,6 +127,24 @@ export default function OverviewPage() {
   const readinessValue = vetoed ? vetoed.value : metrics.trainingReadiness;
   const [detail, setDetail] = useState<MetricKey | null>(null);
 
+  const [sleepSettings, setSleepSettingsState] = useState<SleepCoachSettings>(DEFAULT_SLEEP_SETTINGS);
+  useEffect(() => {
+    setSleepSettingsState(getSleepSettings());
+    const refresh = () => setSleepSettingsState(getSleepSettings());
+    window.addEventListener("sleep-settings-changed", refresh);
+    return () => window.removeEventListener("sleep-settings-changed", refresh);
+  }, []);
+
+  const dailySummary = useMemo(
+    () => calcDailySummary(wellness, activities, metrics.recoveryScore, garminToday),
+    [wellness, activities, metrics.recoveryScore, garminToday]
+  );
+  const healthMonitor = useMemo(() => calcHealthMonitor(garmin, wellness), [garmin, wellness]);
+  const sleepPlan = useMemo(
+    () => calcSleepCoachPlan(garmin, wellness, sleepSettings),
+    [garmin, wellness, sleepSettings]
+  );
+
   const today      = wellness[wellness.length - 1];
   const todayHRV   = today ? getHRV(today) : null;
   const latestCTL  = today?.ctl;
@@ -180,11 +206,16 @@ export default function OverviewPage() {
           }
         </section>
 
-        {/* Wetter */}
+        {/* Wetter + Tagesüberblick (Belastung / Erholung / Schlaf, Bevel-Stil) */}
         <section>
           <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">Heute in Coesfeld</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch">
             <WeatherCard />
+            <div className="lg:col-span-2 h-full">
+              {isLoading
+                ? <Skeleton className="h-full min-h-[140px]" />
+                : <DailyRings summary={dailySummary} />}
+            </div>
           </div>
         </section>
 
@@ -218,6 +249,22 @@ export default function OverviewPage() {
                 cv={metrics.cv}
                 tsb={latestTSB}
               />
+            </div>
+          )}
+        </section>
+
+        {/* Gesundheitsmonitor + Schlafcoach + Aktivitätszusammenfassung */}
+        <section>
+          <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-3">Gesundheit &amp; Schlaf</p>
+          {isLoading ? (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {[0, 1, 2].map((i) => <Skeleton key={i} className="h-64" />)}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+              <HealthMonitor result={healthMonitor} garminToday={garminToday} />
+              <SleepCoach plan={sleepPlan} />
+              <ActivitySummaryCard activities={activities} />
             </div>
           )}
         </section>

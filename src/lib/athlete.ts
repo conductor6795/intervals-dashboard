@@ -39,8 +39,10 @@ export const TSB = {
 // ── Hard-Trigger (sync mit tagescheck-SKILL.md) ──
 export const HARD = {
   CV: 15.0, // CV > 15 (nur mit hrv_pct < 20 zusammen ein Hard-Trigger)
+  CV_PCT: 20.0, // hrv_pct-Schwelle, unter der CV > 15 zum Hard-Trigger wird
   HRV_PCT: 5.0, // hrv_pct < 5
   TSB: -30, // TSB < −30
+  FLOOR_RATIO: 0.88, // hrv7 < hrv60 × 0.88 → Absolut-Drift-Banner (kein Sofort-Deload)
 } as const;
 
 // ── Statische Athletenparameter (Spiro 26.03.2026) ──
@@ -53,6 +55,10 @@ export const ATHLETE = {
   z2HrLow: 140,
   z2HrHigh: 160,
   weightCorridor: [81, 83] as const,
+  // Für das biologische Alter (Fitness-Alter). birthYear = null → nur Fitness-Alter
+  // ohne Vergleich zum chronologischen Alter. Bei Bedarf hier eintragen.
+  birthYear: null as number | null,
+  sex: "M" as "M" | "F",
 } as const;
 
 // ── Wattzonen (abgeleitet von FTP 300 W) ──

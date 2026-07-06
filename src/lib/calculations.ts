@@ -9,9 +9,13 @@ function mean(arr: number[]): number {
   return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
+/** Stichproben-Standardabweichung (n−1), analog Python statistics.stdev.
+ *  athleten-konstanten.md / Spec §2 rechnet hrv_cv mit statistics.stdev, nicht
+ *  mit der Populations-Variante (÷n) — Letztere macht CV systematisch zu niedrig. */
 function stdDev(arr: number[]): number {
+  if (arr.length < 2) return 0;
   const m = mean(arr);
-  const variance = arr.reduce((sum, v) => sum + Math.pow(v - m, 2), 0) / arr.length;
+  const variance = arr.reduce((sum, v) => sum + Math.pow(v - m, 2), 0) / (arr.length - 1);
   return Math.sqrt(variance);
 }
 
@@ -22,28 +26,30 @@ export function getHRV(day: WellnessDay): number | null {
   return null;
 }
 
-/** 7-Tage rollierender HRV-Durchschnitt (nur Tage mit HRV-Wert) */
+/** hrv7 — Ø der letzten 7 HRV-MESSTAGE (nicht Kalendertage; Lücken durch fehlende
+ *  Messungen verschieben das Fenster sonst). Nenner für hrv_cv und Basis fürs Tagessignal. */
 export function calcHRV7(days: WellnessDay[]): number | null {
   const values = days
-    .slice(-7)
     .map(getHRV)
-    .filter((v): v is number => v !== null);
+    .filter((v): v is number => v !== null)
+    .slice(-7);
   if (values.length < 3) return null;
   return parseFloat(mean(values).toFixed(1));
 }
 
-/** CV (Variationskoeffizient) der letzten 7 HRV-Werte in %
- *  Schwellenwert 6,5 % nach Plews et al. 2012 – trainierte Athleten können
- *  niedrigere individuelle Werte aufweisen. */
+/** hrv_cv — SEKUNDÄRSIGNAL (athleten-konstanten.md / Spec §2):
+ *  Variationskoeffizient der letzten 7 HRV-Messtage in %, Nenner = hrv7 (Ø der 7),
+ *  Stichproben-Stdev (n−1). Bänder: <12 % grün · 12–15 % gelb · >15 % ANS-instabil.
+ *  Fenster in HRV-Messtagen (nur Tage mit Wert), nicht Kalendertagen. */
 export function calcCV(days: WellnessDay[]): number | null {
   const values = days
-    .slice(-7)
     .map(getHRV)
-    .filter((v): v is number => v !== null);
+    .filter((v): v is number => v !== null)
+    .slice(-7);
   if (values.length < 3) return null;
   const m = mean(values);
   if (m === 0) return null;
-  return parseFloat(((stdDev(values) / m) * 100).toFixed(2));
+  return parseFloat(((stdDev(values) / m) * 100).toFixed(1));
 }
 
 /** Trend-Verhältnis: aktueller HRV / HRV7 * 100 */
@@ -101,6 +107,21 @@ export function calcHrvPct(days: WellnessDay[]): number | null {
   return Math.round(((below + 0.5 * equal) / last28.length) * 1000) / 10;
 }
 
+/**
+ * Absolut-Trend-Floor (Spec §6): fängt langsame absolute HRV-Drift, die das
+ * rollende 28-Tage-Perzentil wegnormalisiert. hrv7 > 12 % unter dem 60-Tage-Mittel
+ * → hrv_floor_flag. Kein Sofort-ERSETZEN, sondern Drift-Banner; 2 Wochenchecks in
+ * Folge mit Flag → Deload-Prüfung.
+ */
+export function calcHrvFloorFlag(days: WellnessDay[]): boolean {
+  const vals = days.map(getHRV).filter((v): v is number => v !== null);
+  if (vals.length < 7) return false;
+  const hrv7 = mean(vals.slice(-7));
+  const last60 = vals.slice(-60);
+  const hrv60 = mean(last60);
+  return hrv7 > 0 && hrv60 > 0 && hrv7 < hrv60 * HARD.FLOOR_RATIO;
+}
+
 /** Tagessignal: heutige HRV relativ zum 7-Tage-Schnitt (athleten-konstanten.md). */
 function hrvDaySignal(
   hrvToday: number | null,
@@ -121,6 +142,35 @@ function threeDaysHrvDown(days: WellnessDay[]): boolean {
   const hrv7 = vals.slice(-7).reduce((a, b) => a + b, 0) / 7;
   const last3 = vals.slice(-3);
   return last3.length === 3 && last3.every((v) => v < hrv7 * DAY_SIGNAL.downTrend);
+}
+
+/**
+ * Hard-Trigger / Sofort-Deload (Spec §4) — mechanisch, kein Reasoning.
+ * Einer reicht → Verdikt-Ceiling ERSETZEN. Gibt die Liste der aktiven Trigger für
+ * die Anzeige zurück. Kern des Alt-Bugs: CV > 15 % ist KEIN eigenständiger
+ * Hard-Trigger mehr, sondern nur kombiniert mit hrv_pct < 20 %.
+ */
+export function evaluateHardTriggers(args: {
+  hrvPct: number | null;
+  cv: number | null;
+  tsb: number | null;
+  threeDaysDown: boolean;
+}): { ceiling: "ERSETZEN" | null; active: string[] } {
+  const { hrvPct, cv, tsb, threeDaysDown } = args;
+  const active: string[] = [];
+  if (cv != null && cv > HARD.CV && hrvPct != null && hrvPct < HARD.CV_PCT) {
+    active.push(`CV ${cv} % > ${HARD.CV} % UND hrv_pct ${hrvPct} % < ${HARD.CV_PCT} %`);
+  }
+  if (hrvPct != null && hrvPct < HARD.HRV_PCT) {
+    active.push(`hrv_pct ${hrvPct} % < ${HARD.HRV_PCT} % (kritisch)`);
+  }
+  if (tsb != null && tsb < HARD.TSB) {
+    active.push(`TSB ${Math.round(tsb)} < ${HARD.TSB} (überbelastet)`);
+  }
+  if (threeDaysDown) {
+    active.push(`3+ Tage hrv_today < hrv7 × ${DAY_SIGNAL.downTrend}`);
+  }
+  return { ceiling: active.length > 0 ? "ERSETZEN" : null, active };
 }
 
 /**
@@ -153,7 +203,7 @@ export function calcAmpel(args: {
   // ── Hard-Trigger → ROT ──
   const hardRed =
     hrvPct < HARD.HRV_PCT ||
-    (cv != null && cv > HARD.CV && hrvPct < HRV_PCT.suppressed) ||
+    (cv != null && cv > HARD.CV && hrvPct < HARD.CV_PCT) ||
     (tsb != null && tsb < HARD.TSB) ||
     threeDaysDown;
   if (hardRed) {
@@ -238,7 +288,7 @@ export function calcVetoedReadiness(
 
   const hardRed =
     (hrvPct != null && hrvPct < HARD.HRV_PCT) ||
-    (cv != null && cv > HARD.CV && hrvPct != null && hrvPct < HRV_PCT.suppressed) ||
+    (cv != null && cv > HARD.CV && hrvPct != null && hrvPct < HARD.CV_PCT) ||
     (tsb != null && tsb < HARD.TSB) ||
     threeDaysDown;
   if (hardRed) {
@@ -432,6 +482,8 @@ export function calcAllMetrics(days: WellnessDay[]): CalculatedMetrics {
       cvZone: "green",
       cvZoneLabel: "Keine Daten",
       cvZoneAdvice: "Bitte Wellness-Daten importieren.",
+      hrvFloorFlag: false,
+      hardTriggers: [],
     };
   }
   const today = days[days.length - 1];
@@ -442,14 +494,16 @@ export function calcAllMetrics(days: WellnessDay[]): CalculatedMetrics {
   const tsb = (today.ctl != null && today.atl != null) ? today.ctl - today.atl : null;
   const trainingReadiness = calcTrainingReadiness(today, days);
   const recoveryScore = calcRecoveryScore(today, days);
+  const threeDaysDown = threeDaysHrvDown(days);
   const { zone, label, advice } = calcAmpel({
     hrvPct,
     hrvToday: getHRV(today),
     hrv7,
     cv,
     tsb,
-    threeDaysDown: threeDaysHrvDown(days),
+    threeDaysDown,
   });
+  const { active: hardTriggers } = evaluateHardTriggers({ hrvPct, cv, tsb, threeDaysDown });
 
   return {
     hrv7,
@@ -462,5 +516,7 @@ export function calcAllMetrics(days: WellnessDay[]): CalculatedMetrics {
     cvZone: zone,
     cvZoneLabel: label,
     cvZoneAdvice: advice,
+    hrvFloorFlag: calcHrvFloorFlag(days),
+    hardTriggers,
   };
 }

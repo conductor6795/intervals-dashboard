@@ -173,8 +173,8 @@ export default function SettingsPage() {
           <div className="space-y-3 text-xs text-dash-muted">
             <div className="pb-3 border-b border-dash-border">
               <p className="text-white font-medium mb-1">Trainingsbereitschaft</p>
-              <p>HRV-Trend 40 % · Schlaf 25 % · RHR 15 % · Subjektiv 15 % · CV 5 %</p>
-              <p className="mt-0.5 opacity-70">Buchheit (2014), Plews et al. (2013)</p>
+              <p>Load/TSB 25 % · HRV-Trend 25 % · Subjektiv 15 % · Schlaf 15 % · RHR 10 % · CV 10 %</p>
+              <p className="mt-0.5 opacity-70">Garmin-Readiness, gedeckelt durch HRV-Hard-Trigger (Veto)</p>
             </div>
             <div className="pb-3 border-b border-dash-border">
               <p className="text-white font-medium mb-1">Schlaf-Scoring</p>
@@ -182,8 +182,8 @@ export default function SettingsPage() {
               <p className="mt-0.5 opacity-70">Hirshkowitz et al. (2015), Walker (2017)</p>
             </div>
             <div className="pb-3 border-b border-dash-border">
-              <p className="text-white font-medium mb-1">CV-Ampel</p>
-              <p>4-Felder-Matrix: HRV-Trend × CV (Schwelle 6,5 %). Plews et al. (2012, 2013).</p>
+              <p className="text-white font-medium mb-1">Tagescheck-Verdikt (CV-Ampel)</p>
+              <p>2D-Matrix hrv_pct (28-Tage-Perzentil, Hauptsignal) × hrv_cv (7 Messtage: &lt;12 % grün · 12–15 % gelb · &gt;15 % ANS-instabil). CV &gt; 15 % ist nur mit hrv_pct &lt; 20 % ein Hard-Trigger. athleten-konstanten.md (Stand 01.07.2026).</p>
             </div>
             <div className="pb-3 border-b border-dash-border">
               <p className="text-white font-medium mb-1">PMC (CTL / ATL / TSB)</p>
