@@ -115,8 +115,19 @@ export default function GarminCards() {
     data.map((d) => (typeof d[k] === "number" ? (d[k] as number) : null));
   const sleepH = data.map((d) => (d.sleepSecs != null ? +(d.sleepSecs / 3600).toFixed(1) : null));
 
-  const stressC = stressColor(today?.stressAvg ?? null);
-  const acwrC = acwrColor(today?.acwrStatus ?? null);
+  // Manche Felder (Schlaf, ACWR, VO2max) fehlen für den aktuellsten Tag oft, weil der
+  // Sync frühmorgens läuft oder das Gerät sie noch nicht übertragen hat. Statt eine leere
+  // Kachel zu zeigen, greifen wir auf den zuletzt vorhandenen Wert zurück.
+  const latest = <K extends keyof GarminDay>(k: K): GarminDay[K] | null => {
+    for (let i = data.length - 1; i >= 0; i--) {
+      const v = data[i][k];
+      if (v != null) return v;
+    }
+    return null;
+  };
+
+  const stressC = stressColor((latest("stressAvg") as number | null) ?? null);
+  const acwrC = acwrColor((latest("acwrStatus") as string | null) ?? null);
 
   const lastSyncLabel = lastSync
     ? new Date(lastSync).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
@@ -144,7 +155,7 @@ export default function GarminCards() {
           <StatCard
             label="Body Battery"
             icon={<BatteryCharging size={10} />}
-            value={today.bbRecent}
+            value={latest("bbRecent") as number | null}
             sub={today.bbLow != null && today.bbHigh != null ? `${today.bbLow}–${today.bbHigh} heute` : undefined}
             colorClass="text-emerald-400"
             hex="#34d399"
@@ -156,8 +167,8 @@ export default function GarminCards() {
           <StatCard
             label="Stress"
             icon={<Activity size={10} />}
-            value={today.stressAvg}
-            sub={today.stressMax != null ? `max ${today.stressMax}` : undefined}
+            value={latest("stressAvg") as number | null}
+            sub={(latest("stressMax") as number | null) != null ? `max ${latest("stressMax")}` : undefined}
             colorClass={stressC.cls}
             hex={stressC.hex}
             values={num("stressAvg")}
@@ -168,9 +179,9 @@ export default function GarminCards() {
           <StatCard
             label="Schlaf"
             icon={<Moon size={10} />}
-            value={today.sleepSecs != null ? (today.sleepSecs / 3600).toFixed(1) : null}
+            value={(latest("sleepSecs") as number | null) != null ? ((latest("sleepSecs") as number) / 3600).toFixed(1) : null}
             unit="h"
-            sub={today.sleepScore != null ? `Score ${today.sleepScore}` : undefined}
+            sub={(latest("sleepScore") as number | null) != null ? `Score ${latest("sleepScore")}` : undefined}
             colorClass="text-blue-400"
             hex="#60a5fa"
             values={sleepH}
@@ -181,7 +192,7 @@ export default function GarminCards() {
           <StatCard
             label="Ruhepuls"
             icon={<Heart size={10} />}
-            value={today.restingHr}
+            value={latest("restingHr") as number | null}
             unit="bpm"
             colorClass="text-red-400"
             hex="#f87171"
@@ -193,8 +204,8 @@ export default function GarminCards() {
           <StatCard
             label="ACWR"
             icon={<Gauge size={10} />}
-            value={today.acwr != null ? today.acwr.toFixed(2) : null}
-            sub={today.acwrStatus ?? undefined}
+            value={(latest("acwr") as number | null) != null ? (latest("acwr") as number).toFixed(2) : null}
+            sub={(latest("acwrStatus") as string | null) ?? undefined}
             colorClass={acwrC.cls}
             hex={acwrC.hex}
             values={num("acwr")}
@@ -203,8 +214,8 @@ export default function GarminCards() {
           <StatCard
             label="VO₂max"
             icon={<Wind size={10} />}
-            value={today.vo2maxCycling != null ? today.vo2maxCycling.toFixed(1) : null}
-            sub={today.vo2maxRunning != null ? `Rad · Lauf ${today.vo2maxRunning.toFixed(1)}` : "Rad"}
+            value={(latest("vo2maxCycling") as number | null) != null ? (latest("vo2maxCycling") as number).toFixed(1) : null}
+            sub={(latest("vo2maxRunning") as number | null) != null ? `Rad · Lauf ${(latest("vo2maxRunning") as number).toFixed(1)}` : "Rad"}
             colorClass="text-indigo-400"
             hex="#818cf8"
             values={num("vo2maxCycling")}

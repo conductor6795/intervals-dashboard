@@ -1,7 +1,8 @@
 "use client";
-import { Moon, Sunrise, BedDouble, AlarmClock, Info, Sparkles, Repeat } from "lucide-react";
+import { Moon, Sunrise, BedDouble, Info, Sparkles, Repeat } from "lucide-react";
 import { clsx } from "clsx";
 import { SleepCoachPlan, formatLocalIsoTime } from "@/lib/sleepCoach";
+import InfoPopover from "@/components/ui/InfoPopover";
 
 function TimeBlock({
   icon: Icon, label, value, color,
@@ -22,18 +23,40 @@ function consistencyColor(score: number) {
   return "text-red-400";
 }
 
+function fmtAdj(min: number): string {
+  const r = Math.round(min);
+  return `${r >= 0 ? "+" : ""}${r} Min`;
+}
+
 export default function SleepCoach({ plan }: { plan: SleepCoachPlan }) {
   const lastStart = formatLocalIsoTime(plan.lastNight?.sleepStart ?? null);
   const lastEnd = formatLocalIsoTime(plan.lastNight?.sleepEnd ?? null);
   const needH = Math.floor(plan.totalNeedH);
   const needMin = Math.round((plan.totalNeedH - needH) * 60);
+  const baseMin = Math.round(plan.baseNeedH * 60);
 
   return (
     <div className="bg-dash-card border border-dash-border rounded-2xl p-5 flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium">Schlafcoach</p>
-        <span className="text-[11px] text-dash-muted">
+        <span className="flex items-center gap-1 text-[11px] text-dash-muted">
           Bedarf heute: <span className="text-white font-semibold tabular-nums">{needH}h {needMin > 0 ? `${needMin}min` : ""}</span>
+          <InfoPopover align="right" label="Schlafbedarf erklärt">
+            <span className="block font-semibold text-white mb-1">Wie sich der Bedarf heute ergibt</span>
+            <span className="block">
+              {plan.isLearned
+                ? "Ausgangspunkt ist dein aus den Daten gelernter Optimalbedarf"
+                : "Ausgangspunkt ist dein Basiswert aus den Einstellungen"}
+              : <span className="text-white tabular-nums"> {plan.baseNeedH.toFixed(1)} h</span> ({baseMin} Min).
+            </span>
+            <span className="block mt-1.5 space-y-0.5">
+              <span className="flex justify-between gap-3"><span>Schlafschuld letzte Nächte</span><span className="text-white tabular-nums">{fmtAdj(plan.debtAdjustMin)}</span></span>
+              <span className="flex justify-between gap-3"><span>Trainingsbelastung</span><span className="text-white tabular-nums">{fmtAdj(plan.strainAdjustMin)}</span></span>
+              <span className="flex justify-between gap-3"><span>Stress heute</span><span className="text-white tabular-nums">{fmtAdj(plan.stressAdjustMin)}</span></span>
+              <span className="flex justify-between gap-3 border-t border-dash-border pt-0.5 mt-0.5"><span className="text-white">Gesamt</span><span className="text-white tabular-nums font-semibold">{needH}h {needMin}min</span></span>
+            </span>
+            <span className="block mt-1.5 text-dash-muted/80">Gedeckelt auf max. +90 / −45 Min gegenüber dem Ausgangswert, damit die Empfehlung realistisch bleibt.</span>
+          </InfoPopover>
         </span>
       </div>
 
@@ -70,38 +93,35 @@ export default function SleepCoach({ plan }: { plan: SleepCoachPlan }) {
         <TimeBlock icon={Sunrise} label={plan.wakeIsWeekday ? "Aufstehen (Wo)" : "Aufstehen (WE)"} value={plan.wakeTime} color="text-orange-400" />
       </div>
 
-      {/* Regelmäßigkeit + beste Bettzeit */}
-      {(plan.consistencyScore != null || plan.bestBedtime) && (
-        <div className="flex items-center gap-4 flex-wrap">
-          {plan.consistencyScore != null && (
-            <div className="flex items-center gap-1.5">
-              <Repeat size={12} className="text-dash-muted" />
-              <span className="text-[11px] text-dash-muted">Regelmäßigkeit:</span>
-              <span className={clsx("text-[11px] font-semibold tabular-nums", consistencyColor(plan.consistencyScore))}>
-                {plan.consistencyScore} · {plan.consistencyLabel}
-              </span>
-            </div>
-          )}
-          {plan.bestBedtime && (
-            <div className="flex items-center gap-1.5">
-              <Moon size={12} className="text-dash-muted" />
-              <span className="text-[11px] text-dash-muted">Beste Nächte ab:</span>
-              <span className="text-[11px] font-semibold text-white tabular-nums">{plan.bestBedtime}</span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Begründung */}
-      <div>
-        <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium mb-1.5">Warum</p>
-        <ul className="space-y-1">
-          {plan.reasoning.map((r, i) => (
-            <li key={i} className="text-[11px] text-dash-muted leading-snug flex gap-1.5">
-              <span className="text-dash-muted/50">•</span>{r}
-            </li>
-          ))}
-        </ul>
+      {/* Regelmäßigkeit + beste Bettzeit + Warum-Button */}
+      <div className="flex items-center gap-4 flex-wrap">
+        {plan.consistencyScore != null && (
+          <div className="flex items-center gap-1.5">
+            <Repeat size={12} className="text-dash-muted" />
+            <span className="text-[11px] text-dash-muted">Regelmäßigkeit:</span>
+            <span className={clsx("text-[11px] font-semibold tabular-nums", consistencyColor(plan.consistencyScore))}>
+              {plan.consistencyScore} · {plan.consistencyLabel}
+            </span>
+          </div>
+        )}
+        {plan.bestBedtime && (
+          <div className="flex items-center gap-1.5">
+            <Moon size={12} className="text-dash-muted" />
+            <span className="text-[11px] text-dash-muted">Beste Nächte ab:</span>
+            <span className="text-[11px] font-semibold text-white tabular-nums">{plan.bestBedtime}</span>
+          </div>
+        )}
+        <span className="flex items-center gap-1 text-[11px] text-dash-muted ml-auto">
+          Warum
+          <InfoPopover align="right" label="Warum diese Empfehlung">
+            <span className="block font-semibold text-white mb-1">Warum diese Empfehlung</span>
+            <ul className="space-y-1">
+              {plan.reasoning.map((r, i) => (
+                <li key={i} className="flex gap-1.5"><span className="text-dash-muted/50">•</span>{r}</li>
+              ))}
+            </ul>
+          </InfoPopover>
+        </span>
       </div>
 
       {/* Letzte Nacht */}
@@ -117,26 +137,6 @@ export default function SleepCoach({ plan }: { plan: SleepCoachPlan }) {
               </span>
             )}
           </span>
-        </div>
-      )}
-
-      {/* Nickerchen */}
-      {plan.todayNaps.length > 0 && (
-        <div className="pt-3 border-t border-dash-border">
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <AlarmClock size={11} className="text-dash-muted" />
-            <p className="text-[10px] text-dash-muted uppercase tracking-wider font-medium">
-              Nickerchen heute (erkannt, Näherung)
-            </p>
-          </div>
-          <div className="space-y-1">
-            {plan.todayNaps.map((n, i) => (
-              <div key={i} className="flex justify-between text-[11px]">
-                <span className="text-dash-muted">Body-Battery-Anstieg tagsüber</span>
-                <span className="text-white tabular-nums">~{n.durationMin} min</span>
-              </div>
-            ))}
-          </div>
         </div>
       )}
     </div>

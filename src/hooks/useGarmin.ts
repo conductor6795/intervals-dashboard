@@ -1,13 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 
-export interface GarminNap {
-  startMs: number;
-  endMs: number;
-  durationMin: number;
-  gain: number;
-}
-
 export interface GarminDay {
   date: string;
   bbHigh: number | null;
@@ -30,9 +23,6 @@ export interface GarminDay {
   // der Schlafcoach schätzt die Bettzeit aus sleepStartLocal ab.
   sleepStartLocal: string | null;
   sleepEndLocal: string | null;
-  // Best-effort Nickerchen-Erkennung über Body-Battery-Anstiege (siehe garmin-sync.py) —
-  // heuristisch, kein offizielles Garmin-Feld.
-  naps: GarminNap[];
   respirationAvg: number | null;
   respirationLow: number | null;
   respirationHigh: number | null;

@@ -17,10 +17,10 @@
  * nicht den Zeitpunkt des Zubettgehens. "Licht aus" ist daher eine Schätzung
  * (Schlafbeginn − angenommene Einschlaflatenz).
  */
-import { GarminDay, GarminNap } from "@/hooks/useGarmin";
+import { GarminDay } from "@/hooks/useGarmin";
 import { WellnessDay } from "./types";
 import { SleepCoachSettings } from "./sleepSettings";
-import { calcRecoveryScore } from "./calculations";
+import { getHRV } from "./calculations";
 
 function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v));
@@ -36,7 +36,6 @@ export interface SleepCoachPlan {
   strainAdjustMin: number;
   stressAdjustMin: number;
   debtAdjustMin: number;
-  napOffsetMin: number;
   sleepDebtH: number;
   wakeTime: string;
   wakeIsWeekday: boolean;
@@ -48,7 +47,6 @@ export interface SleepCoachPlan {
     sleepEnd: string | null;
     durationH: number | null;
   } | null;
-  todayNaps: GarminNap[];
   consistencyScore: number | null;   // 0–100, Regelmäßigkeit der Schlafzeiten
   consistencyLabel: string | null;
   bestBedtime: string | null;        // beobachtete Bettzeit der besten Nächte
@@ -96,7 +94,7 @@ interface SleepRecord {
   score: number | null;
   startMin: number | null;
   endMin: number | null;
-  outcome: number | null; // Erholungs-/Qualitätsscore für das Lernen
+  outcome: number | null; // Lern-Outcome = HRV des Folgemorgens (physiologisch, NICHT aus Schlafdauer abgeleitet)
 }
 
 function buildSleepHistory(
@@ -116,13 +114,11 @@ function buildSleepHistory(
     if (secs == null) continue;
     const score = g?.sleepScore ?? w?.sleepScore ?? null;
 
-    // Outcome fürs Lernen: Erholungsscore des Tages (holistisch), sonst Schlaf-Score.
-    let outcome: number | null = null;
-    if (w) {
-      const slice = wSorted.slice(0, wSorted.indexOf(w) + 1);
-      outcome = calcRecoveryScore(w, slice);
-    }
-    if (outcome == null) outcome = score;
+    // Outcome fürs Lernen: HRV des Folgemorgens (misst dieselbe Nacht). BEWUSST nicht
+    // der Erholungs-/Schlaf-Score, denn diese enthalten die Schlafdauer selbst → das
+    // würde "mehr Schlaf = besser" mechanisch erzwingen (Zirkelschluss). HRV ist ein
+    // unabhängiges physiologisches Signal der nächtlichen Erholung.
+    const outcome: number | null = w ? getHRV(w) : null;
 
     records.push({
       date,
@@ -136,14 +132,27 @@ function buildSleepHistory(
   return records;
 }
 
+/** Median (robuster als Mittel gegen Ausreißer-Nächte). */
+function median(a: number[]): number {
+  const s = [...a].sort((x, y) => x - y);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
 /**
  * Lernt den individuellen Optimal-Schlafbedarf: bucketiert die Nächte nach Dauer
- * (0,5-h-Schritte) und wählt den Bucket mit dem besten mittleren Outcome. Braucht
- * genug Historie und Streuung, sonst null (→ Basiswert greift).
+ * (0,5-h-Schritte) und wählt den Bucket mit dem besten MEDIAN-Outcome (HRV).
+ *
+ * Robustheit gegen den Tail-Bias (wenige Extremnächte mit zufällig hoher HRV):
+ *  - Kandidaten nur im plausiblen Band 6,0–9,0 h (darüber ist "Bedarf" fast immer
+ *    Rauschen/Ausschlafen, kein echter Bedarf),
+ *  - mind. 4 Nächte pro Bucket,
+ *  - Ergebnis auf 6,5–9,0 h geklemmt.
+ * Zu wenig Historie/Streuung → null (Basiswert aus Einstellungen greift).
  */
 function learnOptimalDuration(records: SleepRecord[]): number | null {
   const usable = records.filter((r) => r.outcome != null && r.hours >= 4 && r.hours <= 11);
-  if (usable.length < 10) return null;
+  if (usable.length < 14) return null;
 
   const buckets = new Map<number, number[]>();
   for (const r of usable) {
@@ -153,12 +162,12 @@ function learnOptimalDuration(records: SleepRecord[]): number | null {
     buckets.set(b, arr);
   }
   const scored = Array.from(buckets.entries())
-    .filter(([, vals]) => vals.length >= 2)
-    .map(([bucket, vals]) => ({ bucket, meanOutcome: mean(vals), n: vals.length }));
+    .filter(([bucket, vals]) => vals.length >= 4 && bucket >= 6.0 && bucket <= 9.0)
+    .map(([bucket, vals]) => ({ bucket, med: median(vals), n: vals.length }));
   if (scored.length < 3) return null;
 
-  scored.sort((a, b) => b.meanOutcome - a.meanOutcome);
-  return scored[0].bucket;
+  scored.sort((a, b) => b.med - a.med);
+  return clamp(scored[0].bucket, 6.5, 9.0);
 }
 
 /** Zirkuläre Standardabweichung von Uhrzeiten (Minuten-of-Day) über 24 h. */
@@ -281,18 +290,15 @@ export function calcSleepCoachPlan(
     }
   }
 
-  // ── Nickerchen heute reduzieren den nächtlichen Bedarf ──
-  const todayNaps = today?.naps ?? [];
-  const napMinutes = todayNaps.reduce((s, n) => s + n.durationMin, 0);
-  const napOffsetMin = -clamp(napMinutes * 0.5, 0, 60);
-  if (napOffsetMin < 0) {
-    reasoning.push(`≈${Math.round(napMinutes)} Min Nickerchen heute erkannt (Näherung) → ${Math.round(napOffsetMin)} Min.`);
-  }
-
+  // Gesamt-Bedarf: Optimalbedarf + Zu-/Abschläge. Obergrenze bewusst konservativ
+  // (max. +90 Min über Basis), damit die Empfehlung nicht in unrealistische
+  // Schlafzeiten läuft; Untergrenze −45 Min.
+  const adjustments = debtAdjustMin + strainAdjustMin + stressAdjustMin;
   const totalNeedMin = clamp(
-    baseNeedH * 60 + debtAdjustMin + strainAdjustMin + stressAdjustMin + napOffsetMin,
-    baseNeedH * 60 * 0.85,
-    baseNeedH * 60 * 1.4
+    baseNeedH * 60 + adjustments,
+    // relativ ±, plus absolute Sinngrenzen 6,0–9,75 h
+    Math.max(baseNeedH * 60 - 45, 360),
+    Math.min(baseNeedH * 60 + 90, 585)
   );
   const totalNeedH = totalNeedMin / 60;
 
@@ -327,7 +333,6 @@ export function calcSleepCoachPlan(
     strainAdjustMin,
     stressAdjustMin,
     debtAdjustMin,
-    napOffsetMin,
     sleepDebtH: debtH,
     wakeTime,
     wakeIsWeekday,
@@ -335,7 +340,6 @@ export function calcSleepCoachPlan(
     lightsOutTime: fmtHM(lightsOutMin),
     reasoning,
     lastNight,
-    todayNaps,
     consistencyScore,
     consistencyLabel,
     bestBedtime,

@@ -7,7 +7,6 @@ Holt die Signale, die über intervals.icu NICHT zuverlässig ankommen:
   - All-Day-Stress (Ø / max / Zonenverteilung)
   - Schlafphasen (deep / light / rem / awake) + Score
   - Schlafbeginn / -ende (lokale Zeit) — Basis für den Schlafcoach
-  - Nickerchen (best-effort, siehe extract_naps)
   - Atemfrequenz (Ruhe / Schlaf-Ø)
   - Training Readiness (Garmins eigener Score)
   - Training Status (MAINTAINING / PRODUCTIVE / …) als Textlabel
@@ -75,51 +74,9 @@ def extract_body_battery(raw) -> dict:
             "bbHigh":   max(vals) if vals else None,
             "bbLow":    min(vals) if vals else None,
             "bbRecent": vals[-1] if vals else None,
-            "_bbSeries": arr,  # intern, nur für Nickerchen-Heuristik — nicht persistiert
         }
     except Exception:
-        return {"bbHigh": None, "bbLow": None, "bbRecent": None, "_bbSeries": []}
-
-
-def extract_naps(bb_series, sleep_start_ms, sleep_end_ms) -> list:
-    """Best-effort Nickerchen-Erkennung außerhalb der Kernschlafzeit.
-
-    Garmins Consumer-API liefert kein dediziertes "Nap"-Feld — echte Nickerchen
-    (kurze, vom Gerät erkannte Tagschlaf-Phasen) sind nicht zuverlässig abrufbar.
-    Als Näherung: anhaltender Body-Battery-Anstieg (≥ 8 Punkte über ≥ 20 Min)
-    außerhalb der Nacht-Schlafzeit gilt als "möglicherweise Nickerchen".
-    Ergebnis ist daher heuristisch und wird im Dashboard entsprechend markiert.
-    """
-    try:
-        rows = [r for r in (bb_series or []) if len(r) > 1 and isinstance(r[1], (int, float))]
-        if len(rows) < 3:
-            return []
-        naps = []
-        i = 0
-        while i < len(rows) - 1:
-            ts0, v0 = rows[i][0], rows[i][1]
-            # Innerhalb der Nachtschlafzeit überspringen
-            if sleep_start_ms and sleep_end_ms and sleep_start_ms <= ts0 <= sleep_end_ms:
-                i += 1
-                continue
-            j = i + 1
-            peak = v0
-            while j < len(rows) and rows[j][1] >= peak:
-                peak = max(peak, rows[j][1])
-                j += 1
-            ts1 = rows[j - 1][0] if j - 1 < len(rows) else ts0
-            duration_min = (ts1 - ts0) / 60000 if ts1 > ts0 else 0
-            if peak - v0 >= 8 and duration_min >= 20:
-                naps.append({
-                    "startMs": ts0,
-                    "endMs": ts1,
-                    "durationMin": round(duration_min),
-                    "gain": peak - v0,
-                })
-            i = max(j, i + 1)
-        return naps
-    except Exception:
-        return []
+        return {"bbHigh": None, "bbLow": None, "bbRecent": None}
 
 
 def extract_stress(raw) -> dict:
@@ -144,8 +101,6 @@ def extract_sleep(raw) -> dict:
         ss = dto.get("sleepScores") or {}
         if isinstance(ss, dict):
             score = (ss.get("overall") or {}).get("value")
-        start_ms = dto.get("sleepStartTimestampGMT")
-        end_ms   = dto.get("sleepEndTimestampGMT")
         start_local = dto.get("sleepStartTimestampLocal")
         end_local   = dto.get("sleepEndTimestampLocal")
         return {
@@ -160,14 +115,11 @@ def extract_sleep(raw) -> dict:
             # erkennt nur den Schlafbeginn selbst. Das Dashboard schätzt die Bettzeit daraus.
             "sleepStartLocal": ms_to_iso(start_local) if start_local else None,
             "sleepEndLocal":   ms_to_iso(end_local) if end_local else None,
-            "_sleepStartMs": start_ms,
-            "_sleepEndMs": end_ms,
         }
     except Exception:
         return {"sleepSecs": None, "deepSecs": None, "lightSecs": None,
                 "remSecs": None, "awakeSecs": None, "sleepScore": None,
-                "sleepStartLocal": None, "sleepEndLocal": None,
-                "_sleepStartMs": None, "_sleepEndMs": None}
+                "sleepStartLocal": None, "sleepEndLocal": None}
 
 
 def ms_to_iso(ms):
@@ -268,9 +220,6 @@ def pull_day(client: Garmin, d: str) -> dict:
         out.update(extract_vo2max(raw))
     except Exception as e:
         print(f"    ⚠ status ({d}): {e}")
-
-    # Nickerchen-Heuristik braucht Body-Battery-Serie + Nachtschlaf-Fenster (beide oben geholt)
-    out["naps"] = extract_naps(out.pop("_bbSeries", []), out.pop("_sleepStartMs", None), out.pop("_sleepEndMs", None))
 
     return out
 

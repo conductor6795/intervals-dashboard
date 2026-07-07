@@ -13,6 +13,7 @@ import { de } from "date-fns/locale";
 import { useWellness } from "@/hooks/useWellness";
 import { useActivities, useEvents } from "@/hooks/useActivities";
 import { useGarmin } from "@/hooks/useGarmin";
+import { useAthleteProfile } from "@/hooks/useAthleteProfile";
 import { buildProgression, findProjectedPeak } from "@/lib/progression";
 import { WellnessDay, Activity } from "@/lib/types";
 import { calcBiologicalAge } from "@/lib/biologicalAge";
@@ -174,24 +175,38 @@ export default function FitnessPage() {
   const { activities, loading: aLoading } = useActivities(days);
   const { events } = useEvents();
   const { data: garmin } = useGarmin();
+  const { vo2max: profileVo2max } = useAthleteProfile("Ride");
 
   const loading = wLoading || aLoading;
 
   // ── Biologisches Alter (Fitness-Alter) ──
   const bioAge = useMemo(() => {
-    const gToday = garmin[garmin.length - 1];
-    const deviceVo2 = gToday?.vo2maxCycling ?? gToday?.vo2maxRunning ?? null;
-    let vo2: number | null = deviceVo2;
-    let source = "Garmin-Messung";
-    if (vo2 == null) {
-      // Schätzung aus FTP/kg nach Coggan: VO2max ≈ (FTP/kg × 10,8) + 7
+    // Quelle für VO2max, in Prioritätsreihenfolge: intervals.icu-Athletenprofil
+    // (dort landet Garmins/Wahoos gemessener Wert) → letzter Garmin-Sync-Wert →
+    // nur als letzter Ausweg die FTP-Schätzung.
+    const gLatestVo2 = (() => {
+      for (let i = garmin.length - 1; i >= 0; i--) {
+        const v = garmin[i].vo2maxCycling ?? garmin[i].vo2maxRunning;
+        if (v != null) return v;
+      }
+      return null;
+    })();
+    let vo2: number | null = null;
+    let source = "";
+    if (profileVo2max != null && profileVo2max > 0) {
+      vo2 = profileVo2max;
+      source = "intervals.icu-Profil";
+    } else if (gLatestVo2 != null) {
+      vo2 = gLatestVo2;
+      source = "Garmin-Messung";
+    } else {
       const weight = (ATHLETE.weightCorridor[0] + ATHLETE.weightCorridor[1]) / 2;
       vo2 = parseFloat(((ATHLETE.ftp / weight) * 10.8 + 7).toFixed(1));
       source = "Schätzung aus FTP/kg";
     }
     const chronoAge = ATHLETE.birthYear ? new Date().getFullYear() - ATHLETE.birthYear : null;
     return calcBiologicalAge(wellness, vo2, source, chronoAge, ATHLETE.sex);
-  }, [garmin, wellness]);
+  }, [garmin, wellness, profileVo2max]);
 
   const today     = wellness[wellness.length - 1];
   const latestCTL = today?.ctl;

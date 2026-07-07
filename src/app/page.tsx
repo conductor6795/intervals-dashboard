@@ -115,6 +115,10 @@ export default function OverviewPage() {
   }, []);
 
   const { data: wellness, loading: wLoading, error: wError, refetch: refetchWellness } = useWellness(days);
+  // Fester Langzeit-Fenster für Schlafcoach & Gesundheitsmonitor — unabhängig vom
+  // Perioden-Selektor oben, damit gelernter Optimalbedarf und 28-Tage-Baselines
+  // stabil sind und mit der Schlaf-Analyse auf /analyse übereinstimmen.
+  const { data: healthWellness } = useWellness(180);
   const { activities, loading: aLoading, refetch: refetchActivities } = useActivities(days);
   const { events, athleteId } = useEvents();
 
@@ -139,10 +143,10 @@ export default function OverviewPage() {
     () => calcDailySummary(wellness, activities, metrics.recoveryScore, garminToday),
     [wellness, activities, metrics.recoveryScore, garminToday]
   );
-  const healthMonitor = useMemo(() => calcHealthMonitor(garmin, wellness), [garmin, wellness]);
+  const healthMonitor = useMemo(() => calcHealthMonitor(garmin, healthWellness), [garmin, healthWellness]);
   const sleepPlan = useMemo(
-    () => calcSleepCoachPlan(garmin, wellness, sleepSettings),
-    [garmin, wellness, sleepSettings]
+    () => calcSleepCoachPlan(garmin, healthWellness, sleepSettings),
+    [garmin, healthWellness, sleepSettings]
   );
 
   const today      = wellness[wellness.length - 1];

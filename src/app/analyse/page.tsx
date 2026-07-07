@@ -18,6 +18,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useWellness } from "@/hooks/useWellness";
 import { WellnessDay } from "@/lib/types";
+import SleepAnalysis from "@/components/analyse/SleepAnalysis";
 
 /* ── Schwellen (hier anpassbar) ───────────────────────────────────────────── */
 const MIN_N = 10;            // Mindest-n pro Gruppe für eine Anzeige
@@ -408,6 +409,9 @@ export default function AnalysePage() {
           </div>
         </div>
       )}
+
+      {/* Schlaf-Analyse */}
+      <SleepAnalysis wellness={wellness} />
 
       {/* Top-Signale */}
       <div className="rounded-2xl border border-dash-border bg-dash-card p-5">
