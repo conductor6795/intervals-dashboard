@@ -49,26 +49,34 @@ export function calcDailySummary(
       const d = a.start_date_local.slice(0, 10);
       byDay.set(d, (byDay.get(d) ?? 0) + (a.icu_training_load ?? 0));
     });
-  const avgDailyLoad = byDay.size ? mean(Array.from(byDay.values())) : 0;
-  const loadPct = avgDailyLoad > 0 ? (todayLoad / avgDailyLoad) * 100 : todayLoad > 0 ? 100 : 0;
+  const avgActiveLoad = byDay.size ? mean(Array.from(byDay.values())) : 0;
+
+  // Bezugsgröße für "viel/wenig heute" ist die CTL (chronische Trainingslast =
+  // typische Tageslast in TSS über 42 Tage). Der Ø aktiver Tage taugt NICHT: viele
+  // niedrige Pendel-Tage ziehen ihn nach unten, dann wirkt jede echte Einheit "hoch".
+  const latestCtlLoad = [...wellnessDays].reverse().find((d) => d.ctl != null)?.ctl ?? null;
+  const refLoad = latestCtlLoad && latestCtlLoad > 0 ? latestCtlLoad : (avgActiveLoad > 0 ? avgActiveLoad : 50);
+  const loadRatio = refLoad > 0 ? todayLoad / refLoad : 0;
+  // Voller Ring = ~2× CTL (ein sehr harter Tag).
+  const loadPct = refLoad > 0 ? Math.min(100, (todayLoad / (refLoad * 2)) * 100) : 0;
 
   let loadLevel: SummaryLevel = "ok";
   let loadCoach: string;
   if (todayLoad === 0) {
     loadLevel = "ok";
     loadCoach = "Noch keine Belastung heute erfasst.";
-  } else if (loadPct < 60) {
+  } else if (loadRatio < 0.8) {
     loadLevel = "good";
-    loadCoach = "Locker – Kapazität für mehr Belastung.";
-  } else if (loadPct < 120) {
+    loadCoach = "Leichter Tag – Kapazität für mehr.";
+  } else if (loadRatio < 1.4) {
     loadLevel = "ok";
-    loadCoach = "Ausgewogene Belastung für heute.";
-  } else if (loadPct < 180) {
+    loadCoach = "Ausgewogene Tagesbelastung.";
+  } else if (loadRatio < 2.0) {
     loadLevel = "warn";
-    loadCoach = "Hohe Belastung – danach Erholung priorisieren.";
+    loadCoach = "Fordernder Tag – Erholung einplanen.";
   } else {
     loadLevel = "bad";
-    loadCoach = "Sehr hohe Belastung – Regeneration im Fokus.";
+    loadCoach = "Sehr hohe Belastung – Regeneration priorisieren.";
   }
 
   // ── Erholung: bestehender Recovery-Score ──
@@ -119,7 +127,7 @@ export function calcDailySummary(
       label: "Belastung",
       pct: Math.min(100, loadPct),
       displayValue: todayLoad > 0 ? `${Math.round(todayLoad)}` : "–",
-      sub: avgDailyLoad > 0 ? `Ø28 ${Math.round(avgDailyLoad)}` : "",
+      sub: latestCtlLoad && latestCtlLoad > 0 ? `CTL ${Math.round(latestCtlLoad)}` : "",
       coach: loadCoach,
       level: loadLevel,
     },

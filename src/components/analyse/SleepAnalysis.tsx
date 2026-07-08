@@ -158,9 +158,9 @@ export default function SleepAnalysis({ wellness }: { wellness: WellnessDay[] })
         <Stat label="Ø Dauer (7 T)" value={`${avgDur7.toFixed(1)} h`} sub={`30 T: ${avgDur30.toFixed(1)} h`} color="text-blue-400" icon={Moon} />
         <Stat label="Ø Schlaf-Score" value={avgScore30 > 0 ? avgScore30.toFixed(0) : "–"} sub="30 Tage" color="text-cyan-400" />
         <Stat
-          label="Gelernter Optimalbedarf"
-          value={plan.isLearned ? `${plan.baseNeedH.toFixed(1)} h` : "–"}
-          sub={plan.isLearned ? "beste Erholung" : "zu wenig Daten"}
+          label="Basisbedarf (personalisiert)"
+          value={`${plan.baseNeedH.toFixed(1)} h`}
+          sub={plan.isLearned ? "aus HRV justiert" : "Einstellungswert"}
           color="text-indigo-400" icon={Sparkles}
         />
         <Stat

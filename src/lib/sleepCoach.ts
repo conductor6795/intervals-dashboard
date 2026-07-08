@@ -232,15 +232,24 @@ export function calcSleepCoachPlan(
   const today = sortedGarmin[sortedGarmin.length - 1];
   const history = buildSleepHistory(garminDays, wellnessDays);
 
-  // ── Optimal-Schlafbedarf lernen ──
+  // ── Basisbedarf: personalisierter Ausgangswert (wie Garmin/Whoop/Bevel) ──
+  // Ausgangspunkt ist der Nutzer-Basiswert (Einstellungen, Default 8 h — Erwachsene
+  // 7–9 h, Hirshkowitz et al. 2015). Der aus HRV gelernte Optimalwert justiert die
+  // Basis nur SANFT (40 % Gewicht, max. ±0,5 h), damit die Empfehlung nicht an
+  // Ausschlaf-Nächten hochgezogen wird — genau das war der Fehler (9,5 h → 9:37).
+  const setBase = settings.baseSleepNeedH;
   const learned = learnOptimalDuration(history);
   const isLearned = learned != null;
-  const baseNeedH = isLearned ? (learned as number) : settings.baseSleepNeedH;
+  const baseNeedH = isLearned
+    ? clamp(setBase + ((learned as number) - setBase) * 0.4, setBase - 0.5, setBase + 0.5)
+    : setBase;
   if (isLearned) {
-    reasoning.push(`Gelernter Optimalbedarf: ~${baseNeedH.toFixed(1)} h — bei dieser Dauer waren deine Erholungswerte am besten.`);
+    reasoning.push(`Basis ${setBase.toFixed(1)} h, per HRV-Daten justiert auf ~${baseNeedH.toFixed(1)} h.`);
   }
 
-  // ── Schlafschuld: letzte 3 Nächte ggü. Optimalbedarf, neuere Nacht wiegt stärker ──
+  // ── Schlafschuld: letzte 3 Nächte ggü. Basisbedarf, neuere Nacht wiegt stärker ──
+  // Bewusst moderat (Cap +40 Min): eine Nacht kann Schlafdefizit nur teilweise
+  // zurückzahlen, nicht komplett (Schlafwissenschaft).
   const last3 = history.slice(-3);
   const weights = [0.25, 0.5, 1.0];
   let debtH = 0;
@@ -250,55 +259,53 @@ export function calcSleepCoachPlan(
     debtH += deficit * w;
   });
   debtH = clamp(debtH, 0, 3);
-  const debtAdjustMin = clamp(debtH * 25, 0, 75);
-  if (debtAdjustMin > 10) {
+  const debtAdjustMin = clamp(debtH * 12, 0, 40);
+  if (debtAdjustMin > 8) {
     reasoning.push(`Schlafschuld der letzten Nächte (≈${debtH.toFixed(1)} h) → +${Math.round(debtAdjustMin)} Min.`);
   }
 
-  // ── Trainingsbelastung: letzter Tag mit Load vs. 7-Tage-Ø ──
+  // ── Trainingsbelastung: gestrige Tageslast vs. CTL (typische Tageslast). Cap +30. ──
+  // CTL ist die richtige Bezugsgröße (dein „normales" Tagesniveau), nicht der Ø der
+  // aktiven Tage — sonst lassen niedrige Pendel-Tage jede echte Einheit „hoch" wirken.
+  const latestCtl = [...wellnessDays].reverse().find((d) => d.ctl != null)?.ctl ?? null;
   const withLoad = wellnessDays
     .map((d) => ({ date: d.id, load: d.atlLoad ?? d.strain ?? null }))
     .filter((d): d is { date: string; load: number } => d.load != null);
-  const last7 = withLoad.slice(-7);
-  const avgDailyLoad = last7.length ? mean(last7.map((d) => d.load)) : null;
   const yesterdayLoad = withLoad.length ? withLoad[withLoad.length - 1].load : null;
+  const strainRef = latestCtl && latestCtl > 0 ? latestCtl : null;
 
   let strainAdjustMin = 0;
-  if (avgDailyLoad != null && avgDailyLoad > 0 && yesterdayLoad != null) {
-    const ratio = yesterdayLoad / avgDailyLoad;
-    if (ratio > 1.6) strainAdjustMin = 45;
-    else if (ratio > 1.2) strainAdjustMin = 25;
-    else if (ratio < 0.4) strainAdjustMin = -10;
+  if (strainRef != null && yesterdayLoad != null) {
+    const ratio = yesterdayLoad / strainRef;
+    if (ratio > 1.8) strainAdjustMin = 30;
+    else if (ratio > 1.3) strainAdjustMin = 15;
     if (strainAdjustMin > 0) {
-      reasoning.push(`Höhere Trainingsbelastung als üblich → +${strainAdjustMin} Min Schlafbedarf.`);
-    } else if (strainAdjustMin < 0) {
-      reasoning.push(`Sehr leichter Trainingstag → ${strainAdjustMin} Min.`);
+      reasoning.push(`Gestern deutlich höhere Last als üblich (${Math.round(yesterdayLoad)} vs. CTL ${Math.round(strainRef)}) → +${strainAdjustMin} Min.`);
     }
   }
 
-  // ── Stress: heutiger Ø-Stress vs. 28-Tage-Baseline ──
+  // ── Stress: heutiger Ø-Stress vs. 28-Tage-Baseline. Cap +20. ──
   const stressVals = sortedGarmin.map((d) => d.stressAvg).filter((v): v is number => v != null);
   const stressBaseline = stressVals.length >= 5 ? mean(stressVals.slice(-28)) : null;
   const todayStress = today?.stressAvg ?? null;
   let stressAdjustMin = 0;
   if (stressBaseline != null && stressBaseline > 0 && todayStress != null) {
     const ratio = todayStress / stressBaseline;
-    if (ratio > 1.4) stressAdjustMin = 30;
-    else if (ratio > 1.15) stressAdjustMin = 15;
+    if (ratio > 1.4) stressAdjustMin = 20;
+    else if (ratio > 1.15) stressAdjustMin = 10;
     if (stressAdjustMin > 0) {
       reasoning.push(`Erhöhter Stress heute (Ø ${todayStress} vs. Ø28 ${stressBaseline.toFixed(0)}) → +${stressAdjustMin} Min.`);
     }
   }
 
-  // Gesamt-Bedarf: Optimalbedarf + Zu-/Abschläge. Obergrenze bewusst konservativ
-  // (max. +90 Min über Basis), damit die Empfehlung nicht in unrealistische
-  // Schlafzeiten läuft; Untergrenze −45 Min.
+  // Gesamt-Bedarf: Basis + Zu-/Abschläge. Relativ max. +60 / −30 Min gegenüber der
+  // Basis, absolut auf 6,5–9,25 h begrenzt — so bleibt ein normaler Tag nahe der
+  // Basis (~8 h) und nur echte Schuld/Last hebt ihn spürbar an.
   const adjustments = debtAdjustMin + strainAdjustMin + stressAdjustMin;
   const totalNeedMin = clamp(
     baseNeedH * 60 + adjustments,
-    // relativ ±, plus absolute Sinngrenzen 6,0–9,75 h
-    Math.max(baseNeedH * 60 - 45, 360),
-    Math.min(baseNeedH * 60 + 90, 585)
+    Math.max(baseNeedH * 60 - 30, 390),
+    Math.min(baseNeedH * 60 + 60, 555)
   );
   const totalNeedH = totalNeedMin / 60;
 

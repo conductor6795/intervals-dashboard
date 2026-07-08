@@ -45,8 +45,8 @@ export default function SleepCoach({ plan }: { plan: SleepCoachPlan }) {
             <span className="block font-semibold text-white mb-1">Wie sich der Bedarf heute ergibt</span>
             <span className="block">
               {plan.isLearned
-                ? "Ausgangspunkt ist dein aus den Daten gelernter Optimalbedarf"
-                : "Ausgangspunkt ist dein Basiswert aus den Einstellungen"}
+                ? "Persönlicher Basisbedarf (Einstellungswert, sanft an deine HRV-Daten justiert)"
+                : "Basiswert aus den Einstellungen"}
               : <span className="text-white tabular-nums"> {plan.baseNeedH.toFixed(1)} h</span> ({baseMin} Min).
             </span>
             <span className="block mt-1.5 space-y-0.5">
@@ -65,7 +65,7 @@ export default function SleepCoach({ plan }: { plan: SleepCoachPlan }) {
         <div className="flex items-start gap-2 p-2.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20">
           <Sparkles size={13} className="text-indigo-400 mt-0.5 shrink-0" />
           <p className="text-[11px] text-indigo-300/90 leading-snug">
-            Optimalbedarf aus deinen Daten gelernt: <span className="font-semibold">~{plan.baseNeedH.toFixed(1)} h</span> lieferten die besten Erholungswerte.
+            Persönlicher Basisbedarf: <span className="font-semibold">~{plan.baseNeedH.toFixed(1)} h</span> — dein Einstellungswert, sanft an die HRV deiner besten Nächte justiert.
           </p>
         </div>
       ) : !plan.hasEnoughData ? (
