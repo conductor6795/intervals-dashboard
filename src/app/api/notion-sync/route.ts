@@ -54,6 +54,22 @@ interface DayData {
   numeric?: Record<string, number>;
   mood?: number | null;
   dynamicTargets?: Record<string, number>;
+  drinks?: Record<string, Record<string, number>>;
+}
+
+// Standarddrinks nach Getränketyp (SD = 10g reiner Alkohol) — muss mit
+// DRINK_BUTTONS in src/app/habits/page.tsx übereinstimmen.
+const DRINK_SD: Record<string, number> = {
+  "0,2L Bier": 0.6,
+  "0,33L Bier": 1.0,
+  "0,5L Bier": 1.5,
+  Shot: 1.3,
+  Mische: 1.5,
+  Cocktail: 1.3,
+};
+function calcDrinkSD(drinks: Record<string, number>): number {
+  const sum = Object.entries(drinks).reduce((s, [label, n]) => s + (DRINK_SD[label] ?? 0) * n, 0);
+  return Math.round(sum * 10) / 10;
 }
 
 type NotionType = "checkbox" | "number" | "rich_text";
@@ -152,10 +168,13 @@ function buildProps(
     const tgt = h.numTarget ?? 0;
 
     if (unit === "sd") {
-      // Nur SD-Zahl — kein Checkbox, keine Aufschlüsselung
+      // Nur SD-Zahl — kein Checkbox, keine Aufschlüsselung.
+      // SD aus den Getränken ableiten (wie die Dashboard-Anzeige), da
+      // numeric[hid] durch Toggles auf numTarget veraltet sein kann.
       const c = colName(h, "(SD)");
       needed[c] = "number";
-      const val = numeric[hid];
+      const sdFromDrinks = calcDrinkSD(day.drinks?.[hid] ?? {});
+      const val = sdFromDrinks > 0 ? sdFromDrinks : (numeric[hid] ?? 0);
       if (val) props[c] = { number: Math.round(val * 100) / 100 };
     } else if (unit === "l" || unit === "liter") {
       // Wasser: Textspalte "getrunken/ziel" (z.B. "3,7/3,5")
