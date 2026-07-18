@@ -22,7 +22,7 @@ interface Habit {
   goalType: GoalType; goalValue: number;
   retroEvening?: boolean; // Abend-Habit: im "Heute"-Tab unter "Letzte Nacht", speichert auf den Vortag
 }
-interface DayData { checked: string[]; numeric: Record<string, number>; mood: number | null; drinks: Record<string, Record<string, number>>; dynamicTargets?: Record<string, number>; wellness?: Record<string, number>; nutrition?: { kcal?: number; carbs?: number; protein?: number }; }
+interface DayData { checked: string[]; numeric: Record<string, number>; mood: number | null; drinks: Record<string, Record<string, number>>; lastDrinkTime?: Record<string, string>; dynamicTargets?: Record<string, number>; wellness?: Record<string, number>; nutrition?: { kcal?: number; carbs?: number; protein?: number }; }
 type History = Record<string, DayData>;
 interface HabitSettings {
   ivAthleteId: string; ivApiKey: string;
@@ -224,7 +224,10 @@ function normalizeDay(raw: unknown): DayData {
   if (!raw) return { checked:[], numeric:{}, mood:null, drinks:{} };
   if (Array.isArray(raw)) return { checked:raw as string[], numeric:{}, mood:null, drinks:{} };
   const r = raw as Partial<DayData>;
-  return { checked:r.checked||[], numeric:r.numeric||{}, mood:r.mood??null, drinks:r.drinks||{}, dynamicTargets:r.dynamicTargets, wellness:r.wellness, nutrition:r.nutrition };
+  return { checked:r.checked||[], numeric:r.numeric||{}, mood:r.mood??null, drinks:r.drinks||{}, lastDrinkTime:r.lastDrinkTime, dynamicTargets:r.dynamicTargets, wellness:r.wellness, nutrition:r.nutrition };
+}
+function nowTimeStr(): string {
+  return new Date().toLocaleTimeString("de-DE", { hour:"2-digit", minute:"2-digit" });
 }
 function isCompleted(h: Habit, date: string, history: History): boolean {
   const day = normalizeDay(history[date]);
@@ -619,6 +622,11 @@ export default function HabitsPage() {
       // SD total auto-berechnen
       const sd=calcDrinkSD(hd);
       if(sd>0)day.numeric[habitId]=sd; else delete day.numeric[habitId];
+      // Zeit des letzten Drinks: bei neuem Drink aktualisieren, bei 0 Drinks löschen
+      const lastDrinkTime={...(day.lastDrinkTime||{})};
+      if(delta>0)lastDrinkTime[habitId]=nowTimeStr();
+      else if(Object.keys(hd).length===0)delete lastDrinkTime[habitId];
+      day.lastDrinkTime=lastDrinkTime;
       return{...prev,[selDate]:day};
     });
   },[selDate]);
@@ -980,10 +988,14 @@ export default function HabitsPage() {
                 {isSDUnit&&(()=>{
                   const hd=day.drinks[hb.id]||{};
                   const totalSD=calcDrinkSD(hd);
+                  const lastTime=day.lastDrinkTime?.[hb.id];
                   return(
                     <div className="flex flex-col items-end gap-2 flex-shrink-0" onClick={e=>e.stopPropagation()}>
                       {totalSD>0&&(
-                        <span className="text-xs font-medium text-red-400">{totalSD.toFixed(1)} SD gesamt</span>
+                        <span className="text-xs font-medium text-red-400">
+                          {totalSD.toFixed(1)} SD gesamt
+                          {lastTime&&<span className="text-[10px] text-red-400/60 font-normal ml-1.5">· zuletzt {lastTime}</span>}
+                        </span>
                       )}
                       <div className="flex flex-wrap gap-1 justify-end max-w-[230px]">
                         {DRINK_BUTTONS.map(d=>{
@@ -1002,7 +1014,7 @@ export default function HabitsPage() {
                         })}
                       </div>
                       {totalSD>0&&(
-                        <button onClick={()=>setHistory(prev=>{const day=normalizeDay(prev[selDate]);day.drinks[hb.id]={};delete day.numeric[hb.id];return{...prev,[selDate]:day};})}
+                        <button onClick={()=>setHistory(prev=>{const day=normalizeDay(prev[selDate]);day.drinks[hb.id]={};delete day.numeric[hb.id];const lastDrinkTime={...(day.lastDrinkTime||{})};delete lastDrinkTime[hb.id];day.lastDrinkTime=lastDrinkTime;return{...prev,[selDate]:day};})}
                           className="text-[10px] text-red-400/40 hover:text-red-400 transition-colors">✕ Reset</button>
                       )}
                     </div>

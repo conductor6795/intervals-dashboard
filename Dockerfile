@@ -15,6 +15,10 @@ RUN npm run build
 FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+# Zeitzone für den nächtlichen 05:00-Cronjob (src/instrumentation.ts).
+# Per .env.local TZ=... überschreibbar.
+RUN apk add --no-cache tzdata
+ENV TZ=Europe/Berlin
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/public ./public
